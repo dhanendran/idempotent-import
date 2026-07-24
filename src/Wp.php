@@ -220,4 +220,22 @@ class Wp implements WordPress {
 		}
 		return (int) $id;
 	}
+
+	public function getAttachmentUrl( $attachmentId ) {
+		$url = wp_get_attachment_url( (int) $attachmentId );
+		return $url ? (string) $url : null;
+	}
+
+	public function findAttachmentByFilename( $filename ) {
+		global $wpdb;
+		$like = '%' . $wpdb->esc_like( ltrim( $filename, '/' ) );
+		$id   = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT post_id FROM {$wpdb->postmeta}
+				 WHERE meta_key = '_wp_attached_file' AND meta_value LIKE %s LIMIT 1",
+				$like
+			)
+		);
+		return $id ? (int) $id : null;
+	}
 }

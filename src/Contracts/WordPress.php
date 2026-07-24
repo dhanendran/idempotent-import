@@ -189,4 +189,21 @@ interface WordPress {
 	 * @throws \RuntimeException On failure.
 	 */
 	public function sideloadMedia( $url, $parentPostId );
+
+	/**
+	 * Resolve the public URL of an attachment on the destination.
+	 *
+	 * @param int $attachmentId
+	 * @return string|null
+	 */
+	public function getAttachmentUrl( $attachmentId );
+
+	/**
+	 * Find an existing attachment id by its original source filename
+	 * (basename of _wp_attached_file). Used by the map-existing strategy.
+	 *
+	 * @param string $filename
+	 * @return int|null
+	 */
+	public function findAttachmentByFilename( $filename );
 }
