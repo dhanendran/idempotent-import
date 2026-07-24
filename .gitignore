@@ -1,0 +1,8 @@
+/vendor/
+/.phpunit.cache/
+/.phpunit.result.cache
+.DS_Store
+
+# Environment-specific junk (see note in README about the mounted-FS git workaround)
+/.git-BROKEN-ignore/
+/__probe__
