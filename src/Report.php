@@ -5,12 +5,12 @@ namespace IdempotentImport;
 /**
  * Builds import-report.json, the importer's analogue of the exporter's
  * manifest.json. Records per-type outcome counts (created / matched / updated /
- * skipped), the resolved source key, timing, and the sorted skip list, and
- * writes the human-facing report.log alongside it.
+ * restored / unchanged / conflict / skipped), the resolved source key, timing,
+ * and the sorted skip list, and writes the human-facing report.log alongside it.
  */
 class Report {
 
-	const SCHEMA_VERSION = '1.0.0';
+	const SCHEMA_VERSION = '1.1.0';
 
 	/** @var array<string, array<string,int>> */
 	private $outcomes = array();
@@ -39,15 +39,18 @@ class Report {
 	 * Record an outcome for one entity.
 	 *
 	 * @param string $type    post|term|user|comment|option|attachment
-	 * @param string $outcome created|matched|updated|skipped
+	 * @param string $outcome created|matched|updated|restored|unchanged|conflict|skipped
 	 */
 	public function record( $type, $outcome ) {
 		if ( ! isset( $this->outcomes[ $type ] ) ) {
 			$this->outcomes[ $type ] = array(
-				'created' => 0,
-				'matched' => 0,
-				'skipped' => 0,
-				'updated' => 0,
+				'created'   => 0,
+				'matched'   => 0,
+				'updated'   => 0,
+				'restored'  => 0,
+				'unchanged' => 0,
+				'conflict'  => 0,
+				'skipped'   => 0,
 			);
 		}
 		if ( ! isset( $this->outcomes[ $type ][ $outcome ] ) ) {

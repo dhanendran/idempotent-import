@@ -59,6 +59,9 @@ class Command {
 	 * [--quiet]
 	 * : Suppress progress bars.
 	 *
+	 * [--verbose]
+	 * : Print a per-entity decision line (created / matched / skipped, and why).
+	 *
 	 * [--force]
 	 * : Proceed despite a manifest schema_version the importer does not recognise.
 	 *

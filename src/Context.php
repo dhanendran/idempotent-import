@@ -41,6 +41,9 @@ class Context {
 	/** @var bool */
 	public $dryRun = false;
 
+	/** @var bool Emit a per-entity decision line for every entity. */
+	public $verbose = false;
+
 	/**
 	 * @param WordPress $wp
 	 * @param IdMap     $idMap

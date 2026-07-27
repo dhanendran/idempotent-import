@@ -47,20 +47,28 @@ class Posts extends AbstractImporter {
 	 * @param array $entity
 	 */
 	private function createPost( $srcId, array $entity ) {
-		$hash     = $this->hash( $entity );
-		$decision = $this->ledgerDecision( 'post', $srcId, $hash );
+		$this->restoring = false;
+		$hash            = $this->hash( $entity );
+		$decision        = $this->ledgerDecision( 'post', $srcId, $hash );
 
-		if ( 'unchanged' === $decision['state'] ) {
-			$this->ctx->report->record( 'post', 'matched' );
+		if ( 'new' !== $decision['state'] && ! $this->destinationIntact( 'post', (int) $decision['dest'] ) ) {
+			$this->note( 'post', $srcId, "restoring: destination post #{$decision['dest']} no longer exists" );
+			$this->restoring = true;
+		}
+		if ( ! $this->restoring && 'unchanged' === $decision['state'] ) {
+			$this->note( 'post', $srcId, "unchanged #{$decision['dest']} (already imported, nothing to do)" );
+			$this->ctx->report->record( 'post', 'unchanged' );
 			return;
 		}
-		if ( 'changed' === $decision['state'] ) {
+		if ( ! $this->restoring && 'changed' === $decision['state'] ) {
 			if ( 'update' === $this->ctx->onConflict ) {
 				$this->writeIds[ (string) $srcId ] = (int) $decision['dest'];
 				$this->ctx->idMap->rememberPost( $srcId, (int) $decision['dest'], 'updated', $hash );
+				$this->note( 'post', $srcId, "updated #{$decision['dest']} (content changed)" );
 				$this->ctx->report->record( 'post', 'updated' );
 			} else {
-				$this->ctx->report->record( 'post', 'matched' );
+				$this->note( 'post', $srcId, "conflict #{$decision['dest']} (source changed; kept destination, use --on-conflict=update)" );
+				$this->ctx->report->record( 'post', 'conflict' );
 			}
 			return;
 		}
@@ -68,12 +76,14 @@ class Posts extends AbstractImporter {
 		$existing = $this->resolveExisting( 'post', $entity );
 		if ( $existing ) {
 			$this->ctx->idMap->rememberPost( $srcId, $existing, 'matched', $hash );
-			$this->ctx->report->record( 'post', 'matched' );
+			$this->note( 'post', $srcId, "matched existing #{$existing} (by post_name/guid)" );
+			$this->ctx->report->record( 'post', $this->outcome( 'matched' ) );
 			return;
 		}
 
 		if ( $this->ctx->dryRun ) {
-			$this->ctx->report->record( 'post', 'created' );
+			$this->note( 'post', $srcId, 'would create (no existing match)' );
+			$this->ctx->report->record( 'post', $this->outcome( 'created' ) );
 			return;
 		}
 
@@ -88,7 +98,8 @@ class Posts extends AbstractImporter {
 
 		$this->ctx->idMap->rememberPost( $srcId, $destId, 'created', $hash );
 		$this->writeIds[ (string) $srcId ] = $destId;
-		$this->ctx->report->record( 'post', 'created' );
+		$this->note( 'post', $srcId, "created #{$destId}" );
+		$this->ctx->report->record( 'post', $this->outcome( 'created' ) );
 		$this->fire( 'idempotent_import_after_entity', 'post', $entity, $destId );
 	}
 
@@ -97,23 +108,28 @@ class Posts extends AbstractImporter {
 	 * @param array $entity
 	 */
 	private function createAttachment( $srcId, array $entity ) {
-		$hash     = $this->hash( $entity );
-		$decision = $this->ledgerDecision( 'post', $srcId, $hash );
+		$this->restoring = false;
+		$hash            = $this->hash( $entity );
+		$decision        = $this->ledgerDecision( 'post', $srcId, $hash );
 		if ( 'new' !== $decision['state'] ) {
-			$this->ctx->report->record( 'attachment', 'matched' );
-			return;
+			if ( $this->destinationIntact( 'post', (int) $decision['dest'] ) ) {
+				$this->ctx->report->record( 'attachment', 'unchanged' );
+				return;
+			}
+			$this->note( 'attachment', $srcId, "restoring: destination attachment #{$decision['dest']} no longer exists" );
+			$this->restoring = true;
 		}
 
 		$existing = $this->resolveExisting( 'post', $entity );
 		if ( $existing ) {
 			$this->ctx->idMap->rememberPost( $srcId, $existing, 'matched', $hash );
 			$this->mapUrl( $entity, $this->ctx->wp->getAttachmentUrl( $existing ) );
-			$this->ctx->report->record( 'attachment', 'matched' );
+			$this->ctx->report->record( 'attachment', $this->outcome( 'matched' ) );
 			return;
 		}
 
 		if ( $this->ctx->dryRun ) {
-			$this->ctx->report->record( 'attachment', 'created' );
+			$this->ctx->report->record( 'attachment', $this->outcome( 'created' ) );
 			return;
 		}
 
@@ -135,7 +151,7 @@ class Posts extends AbstractImporter {
 		$this->ctx->idMap->rememberPost( $srcId, $result->destId, $result->outcome, $hash );
 		$this->mapUrl( $entity, $result->destUrl );
 		$this->attachmentIds[ (string) $srcId ] = (int) $result->destId;
-		$this->ctx->report->record( 'attachment', $result->outcome );
+		$this->ctx->report->record( 'attachment', $this->outcome( $result->outcome ) );
 		$this->fire( 'idempotent_import_after_entity', 'post', $entity, (int) $result->destId );
 	}
 
@@ -225,6 +241,9 @@ class Posts extends AbstractImporter {
 			$entity,
 			function ( $id, $key, $value ) {
 				$this->ctx->wp->addPostMeta( $id, $key, $value );
+			},
+			function ( $id, $key ) {
+				$this->ctx->wp->deletePostMeta( $id, $key );
 			}
 		);
 	}

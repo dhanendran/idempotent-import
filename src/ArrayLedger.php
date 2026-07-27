@@ -35,6 +35,13 @@ class ArrayLedger implements Ledger {
 	/**
 	 * {@inheritDoc}
 	 */
+	public function sqlIdentity() {
+		return null;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
 	public function all( $type ) {
 		if ( ! isset( $this->data[ $type ] ) ) {
 			return array();

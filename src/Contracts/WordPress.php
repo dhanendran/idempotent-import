@@ -16,6 +16,44 @@ namespace IdempotentImport\Contracts;
  */
 interface WordPress {
 
+	/**
+	 * Most missing ids either reconciliation query will list. Past this the
+	 * destination has been wiped rather than edited, and callers should treat the
+	 * whole type as missing instead of materialising millions of ids.
+	 */
+	const MISSING_LIMIT = 50000;
+
+	/* ---- Destination reconciliation -------------------------------------- */
+
+	/**
+	 * Destination ids the ledger has recorded for a type that are no longer there.
+	 *
+	 * The ledger records what the importer did, not what the destination looks
+	 * like now. Anything deleted outside the importer has to be detected here or
+	 * a re-import skips it forever.
+	 *
+	 * Answered by the database as an anti-join against the ledger table, so the
+	 * result is proportional to what went missing (normally nothing) rather than
+	 * to how much has ever been imported.
+	 *
+	 * @param string $type   user|post|term|comment ('term' ids are term_taxonomy_ids).
+	 * @param Ledger $ledger Supplies its own table and source key.
+	 * @return int[] Missing destination ids, at most MISSING_LIMIT + 1 of them.
+	 */
+	public function missingDestIds( $type, Ledger $ledger );
+
+	/**
+	 * Ledger users who no longer belong to the destination blog.
+	 *
+	 * Separate from missingDestIds() because accounts are network-global: removing
+	 * someone from a site deletes their per-blog capabilities and leaves the
+	 * account intact.
+	 *
+	 * @param Ledger $ledger
+	 * @return int[] Non-member ids, at most MISSING_LIMIT + 1 of them.
+	 */
+	public function nonMemberUserIds( Ledger $ledger );
+
 	/* ---- Users ----------------------------------------------------------- */
 
 	/**
@@ -41,6 +79,15 @@ interface WordPress {
 	 * @return void
 	 */
 	public function addUserMeta( $userId, $key, $value );
+
+	/**
+	 * Remove all of a user's meta rows for a key (replace-before-write).
+	 *
+	 * @param int    $userId
+	 * @param string $key
+	 * @return void
+	 */
+	public function deleteUserMeta( $userId, $key );
 
 	/* ---- Terms ----------------------------------------------------------- */
 
@@ -68,6 +115,13 @@ interface WordPress {
 	 * @return void
 	 */
 	public function addTermMeta( $termId, $key, $value );
+
+	/**
+	 * @param int    $termId
+	 * @param string $key
+	 * @return void
+	 */
+	public function deleteTermMeta( $termId, $key );
 
 	/**
 	 * @param int    $termId
@@ -114,6 +168,13 @@ interface WordPress {
 
 	/**
 	 * @param int    $postId
+	 * @param string $key
+	 * @return void
+	 */
+	public function deletePostMeta( $postId, $key );
+
+	/**
+	 * @param int    $postId
 	 * @param string $metaKey
 	 * @param mixed  $value
 	 * @return void
@@ -153,6 +214,13 @@ interface WordPress {
 	 * @return void
 	 */
 	public function addCommentMeta( $commentId, $key, $value );
+
+	/**
+	 * @param int    $commentId
+	 * @param string $key
+	 * @return void
+	 */
+	public function deleteCommentMeta( $commentId, $key );
 
 	/**
 	 * @param int   $commentId

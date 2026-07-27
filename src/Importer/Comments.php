@@ -49,11 +49,17 @@ class Comments extends AbstractImporter {
 	 * @param array $entity
 	 */
 	private function createOne( $srcId, array $entity ) {
-		$hash     = $this->hash( $entity );
-		$decision = $this->ledgerDecision( 'comment', $srcId, $hash );
+		$this->restoring = false;
+		$hash            = $this->hash( $entity );
+		$decision        = $this->ledgerDecision( 'comment', $srcId, $hash );
 		if ( 'new' !== $decision['state'] ) {
-			$this->ctx->report->record( 'comment', 'matched' );
-			return;
+			if ( $this->destinationIntact( 'comment', (int) $decision['dest'] ) ) {
+				$this->note( 'comment', $srcId, "unchanged #{$decision['dest']} (already imported, nothing to do)" );
+				$this->ctx->report->record( 'comment', 'unchanged' );
+				return;
+			}
+			$this->note( 'comment', $srcId, "restoring: destination comment #{$decision['dest']} no longer exists" );
+			$this->restoring = true;
 		}
 
 		$srcPost  = isset( $entity['comment_post_ID'] ) ? (int) $entity['comment_post_ID'] : 0;
@@ -67,12 +73,14 @@ class Comments extends AbstractImporter {
 		$existing = $this->resolveExisting( 'comment', $entity );
 		if ( $existing ) {
 			$this->ctx->idMap->rememberComment( $srcId, $existing, 'matched', $hash );
-			$this->ctx->report->record( 'comment', 'matched' );
+			$this->note( 'comment', $srcId, "matched existing #{$existing} (by post/author/date)" );
+			$this->ctx->report->record( 'comment', $this->outcome( 'matched' ) );
 			return;
 		}
 
 		if ( $this->ctx->dryRun ) {
-			$this->ctx->report->record( 'comment', 'created' );
+			$this->note( 'comment', $srcId, 'would create (no existing match)' );
+			$this->ctx->report->record( 'comment', $this->outcome( 'created' ) );
 			return;
 		}
 
@@ -98,7 +106,8 @@ class Comments extends AbstractImporter {
 
 		$this->ctx->idMap->rememberComment( $srcId, $destId, 'created', $hash );
 		$this->writeIds[ (string) $srcId ] = $destId;
-		$this->ctx->report->record( 'comment', 'created' );
+		$this->note( 'comment', $srcId, "created #{$destId}" );
+		$this->ctx->report->record( 'comment', $this->outcome( 'created' ) );
 		$this->fire( 'idempotent_import_after_entity', 'comment', $entity, $destId );
 	}
 
@@ -129,6 +138,9 @@ class Comments extends AbstractImporter {
 				$entity,
 				function ( $id, $key, $value ) {
 					$this->ctx->wp->addCommentMeta( $id, $key, $value );
+				},
+				function ( $id, $key ) {
+					$this->ctx->wp->deleteCommentMeta( $id, $key );
 				}
 			);
 		}

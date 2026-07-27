@@ -118,6 +118,16 @@ class DbLedger implements Ledger {
 	/**
 	 * {@inheritDoc}
 	 */
+	public function sqlIdentity() {
+		return array(
+			'source_key' => $this->sourceKey,
+			'table'      => $this->table,
+		);
+	}
+
+	/**
+	 * {@inheritDoc}
+	 */
 	public function all( $type ) {
 		$rows = $this->wpdb->get_results(
 			$this->wpdb->prepare(

@@ -14,7 +14,7 @@ must contain a `manifest.json`.
 | --- | --- | --- |
 | `--config=<file>` | — | Import-map config. `.php` returning an array, or `.json`. See [EXTENDING.md](EXTENDING.md). |
 | `--source-key=<key>` | derived | Namespaces the id-map ledger. Defaults to a hash of `manifest.source.site_url` + `blog_id`. Set explicitly when the source URL changed between exports. |
-| `--dry-run` | off | Plan only: report created/matched/skipped counts, write nothing. Always exits zero. |
+| `--dry-run` | off | Plan only: report what each entity would become, write nothing. Always exits zero. |
 | `--only=<csv>` | all | Limit to entity types: `users,terms,posts,comments,options`. |
 | `--skip=<csv>` | — | Exclude entity types. |
 | `--on-conflict=<mode>` | `update` | When a previously-imported entity's content changed: `update`, `skip`, or `recreate`. |
@@ -26,6 +26,25 @@ must contain a `manifest.json`.
 | `--blog-id=<id>` | — | Destination blog on multisite. Required there. |
 | `--quiet` | off | Suppress progress output. |
 | `--force` | off | Proceed despite an unrecognised manifest `schema_version`. |
+
+## Summary outcomes
+
+Every entity lands in exactly one outcome, printed as its own line per entity
+type; the lines sum to the type's total.
+
+| Outcome | Meaning |
+| --- | --- |
+| `created` | New — inserted into the destination. |
+| `matched` | Linked to existing destination content for the first time (e.g. a network user account already had that login/email). |
+| `updated` | Source changed since the last import; re-synced. |
+| `unchanged` | No-op — already imported and the source has not changed. |
+| `restored` | The ledger had it as imported but it was missing from the destination (deleted outside the importer), so it was re-imported. |
+| `conflict` | Source changed but the destination was kept, because `--on-conflict` is not `update`. Recurs every run until resolved. |
+| `skipped` | NOT imported — excluded by a rule, or failed. |
+
+A re-run of an unchanged snapshot puts the whole total under `unchanged` and
+ends with `Nothing to do: all N entities were already imported and unchanged.`
+That line, not the total, is the idempotence check.
 
 ## Exit codes
 
@@ -41,9 +60,9 @@ missing `--blog-id` on multisite) abort immediately with a non-zero exit.
 Next to the snapshot's `manifest.json`, a successful (non-dry-run) run writes:
 
 - `import-report.json` — outcome counts per entity type (created / matched /
-  updated / skipped), the resolved `source_key`, the source metadata copied
-  from the manifest, and a sorted `skipped[]` list. The importer's analogue of
-  the exporter's manifest.
+  updated / unchanged / conflict / skipped), the resolved `source_key`, the
+  source metadata copied from the manifest, and a sorted `skipped[]` list. The
+  importer's analogue of the exporter's manifest.
 - `report.log` — one tab-separated line per skip/warn event, in processing
   order, for `grep`/`tail` during long runs.
 

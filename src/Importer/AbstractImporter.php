@@ -4,6 +4,7 @@ namespace IdempotentImport\Importer;
 
 use IdempotentImport\Context;
 use IdempotentImport\Contracts\EntityImporter;
+use IdempotentImport\Contracts\WordPress;
 use IdempotentImport\Json;
 use IdempotentImport\Registry;
 use IdempotentImport\Snapshot;
@@ -35,6 +36,20 @@ abstract class AbstractImporter implements EntityImporter {
 	 * @var array<string,int>
 	 */
 	protected $writeIds = array();
+
+	/**
+	 * True while re-importing an entity that the ledger had recorded but that is
+	 * no longer on the destination, so its outcome reports as `restored`.
+	 *
+	 * @var bool
+	 */
+	protected $restoring = false;
+
+	/** @var array<string, array<int,bool>> Missing destination ids per type, resolved lazily. */
+	protected $missingDestIds = array();
+
+	/** @var array<string,bool> Types whose destination is gone wholesale (past MISSING_LIMIT). */
+	protected $missingWholesale = array();
 
 	/**
 	 * @param Snapshot $snapshot
@@ -87,16 +102,65 @@ abstract class AbstractImporter implements EntityImporter {
 	}
 
 	/**
+	 * Is the destination entity a ledger row points at still there?
+	 *
+	 * A ledger hit only proves the importer did the work once; it says nothing
+	 * about the destination now. Without this check anything deleted outside the
+	 * importer is skipped on every subsequent run and never comes back.
+	 *
+	 * One query per entity type per run, and it returns only what went missing —
+	 * usually nothing — so the cost does not grow with the size of the migration.
+	 *
+	 * @param string $type   user|post|term|comment
+	 * @param int    $destId
+	 * @return bool
+	 */
+	protected function destinationIntact( $type, $destId ) {
+		if ( ! isset( $this->missingDestIds[ $type ] ) ) {
+			$missing   = $this->ctx->wp->missingDestIds( $type, $this->ctx->idMap->ledger() );
+			$wholesale = count( $missing ) > WordPress::MISSING_LIMIT;
+			if ( $wholesale ) {
+				// The destination was wiped, not edited. Treat the type as gone rather
+				// than hold millions of ids; every entity re-imports anyway.
+				$this->ctx->logger->warn( $type, '*', 'destination missing more than ' . WordPress::MISSING_LIMIT . " {$type}s; treating all as missing" );
+			}
+			$this->missingWholesale[ $type ] = $wholesale;
+			$this->missingDestIds[ $type ]   = $wholesale ? array() : array_fill_keys( array_map( 'intval', $missing ), true );
+		}
+		if ( ! empty( $this->missingWholesale[ $type ] ) ) {
+			return false;
+		}
+		return ! isset( $this->missingDestIds[ $type ][ (int) $destId ] );
+	}
+
+	/**
+	 * The outcome to report, upgraded to `restored` when this entity is being
+	 * re-imported because it had vanished from the destination.
+	 *
+	 * @param string $natural
+	 * @return string
+	 */
+	protected function outcome( $natural ) {
+		return $this->restoring ? 'restored' : $natural;
+	}
+
+	/**
 	 * Write an entity's meta through the full pipeline. Called in the rewrite
 	 * phase for freshly created/updated entities.
 	 *
-	 * @param string   $type    post|term|user|comment
-	 * @param int      $destId
-	 * @param array    $entity
-	 * @param callable $adder   fn(int $destId, string $key, mixed $value): void
+	 * Existing rows for each key are cleared first (via $deleter) so meta is
+	 * replaced, not appended — otherwise the defaults WordPress seeds on insert
+	 * (e.g. a user's subscriber wp_capabilities) would win over the snapshot, and
+	 * re-imports would accumulate duplicate rows.
+	 *
+	 * @param string        $type    post|term|user|comment
+	 * @param int           $destId
+	 * @param array         $entity
+	 * @param callable      $adder   fn(int $destId, string $key, mixed $value): void
+	 * @param callable|null $deleter fn(int $destId, string $key): void
 	 * @return void
 	 */
-	protected function writeMeta( $type, $destId, array $entity, callable $adder ) {
+	protected function writeMeta( $type, $destId, array $entity, callable $adder, ?callable $deleter = null ) {
 		$meta = isset( $entity['meta'] ) && is_array( $entity['meta'] ) ? $entity['meta'] : array();
 
 		$mapper = $this->registry->metaMapper();
@@ -109,11 +173,28 @@ abstract class AbstractImporter implements EntityImporter {
 			if ( $mapper ) {
 				$values = $mapper->transformValues( $key, $values, $type, $this->ctx );
 			}
+			if ( $deleter ) {
+				$deleter( $destId, $key );
+			}
 			$context = "{$type}.meta.{$key}";
 			foreach ( $values as $value ) {
 				$value = $this->rewriteValue( $value, $context );
 				$adder( $destId, $key, $this->ctx->decoder->forStorageValue( $value ) );
 			}
+		}
+	}
+
+	/**
+	 * Emit a per-entity decision line when --verbose is set (console + report.log).
+	 *
+	 * @param string     $type
+	 * @param int|string $sourceId
+	 * @param string     $message
+	 * @return void
+	 */
+	protected function note( $type, $sourceId, $message ) {
+		if ( ! empty( $this->ctx->verbose ) ) {
+			$this->ctx->logger->info( $type, $sourceId, $message );
 		}
 	}
 

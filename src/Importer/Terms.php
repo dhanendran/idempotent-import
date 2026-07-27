@@ -40,13 +40,19 @@ class Terms extends AbstractImporter {
 
 		$this->fire( 'idempotent_import_before_entity', 'term', $entity );
 
-		$hash     = $this->hash( $entity );
-		$decision = $this->ledgerDecision( 'term', $srcTtId, $hash );
+		$this->restoring = false;
+		$hash            = $this->hash( $entity );
+		$decision        = $this->ledgerDecision( 'term', $srcTtId, $hash );
 		if ( 'new' !== $decision['state'] ) {
-			// Already imported previously (unchanged or changed): leave existing
-			// term intact, mappings persist in the ledger.
-			$this->ctx->report->record( 'term', 'matched' );
-			return;
+			if ( $this->destinationIntact( 'term', (int) $decision['dest'] ) ) {
+				// Already imported previously (unchanged or changed): leave existing
+				// term intact, mappings persist in the ledger.
+				$this->note( 'term', $srcTtId, "unchanged #{$decision['dest']} (already imported, nothing to do)" );
+				$this->ctx->report->record( 'term', 'unchanged' );
+				return;
+			}
+			$this->note( 'term', $srcTtId, "restoring: destination term #{$decision['dest']} no longer exists" );
+			$this->restoring = true;
 		}
 
 		// Existing destination term?
@@ -55,13 +61,15 @@ class Terms extends AbstractImporter {
 			$term = $this->ctx->wp->getTermBy( $taxonomy, 'slug', isset( $entity['slug'] ) ? (string) $entity['slug'] : '' );
 			if ( $term ) {
 				$this->recordMaps( $srcTtId, $srcTermId, (int) $term['term_taxonomy_id'], (int) $term['term_id'], 'matched', $hash );
-				$this->ctx->report->record( 'term', 'matched' );
+				$this->note( 'term', $srcTtId, "matched existing #{$term['term_id']} (by {$taxonomy}/slug)" );
+				$this->ctx->report->record( 'term', $this->outcome( 'matched' ) );
 				return;
 			}
 		}
 
 		if ( $this->ctx->dryRun ) {
-			$this->ctx->report->record( 'term', 'created' );
+			$this->note( 'term', $srcTtId, 'would create (no existing match)' );
+			$this->ctx->report->record( 'term', $this->outcome( 'created' ) );
 			return;
 		}
 
@@ -79,7 +87,8 @@ class Terms extends AbstractImporter {
 
 		$this->recordMaps( $srcTtId, $srcTermId, (int) $result['term_taxonomy_id'], (int) $result['term_id'], 'created', $hash );
 		$this->writeIds[ (string) $srcTtId ] = (int) $result['term_id'];
-		$this->ctx->report->record( 'term', 'created' );
+		$this->note( 'term', $srcTtId, "created #{$result['term_id']}" );
+		$this->ctx->report->record( 'term', $this->outcome( 'created' ) );
 		$this->fire( 'idempotent_import_after_entity', 'term', $entity, (int) $result['term_id'] );
 	}
 
@@ -127,6 +136,9 @@ class Terms extends AbstractImporter {
 				$entity,
 				function ( $id, $key, $value ) {
 					$this->ctx->wp->addTermMeta( $id, $key, $value );
+				},
+				function ( $id, $key ) {
+					$this->ctx->wp->deleteTermMeta( $id, $key );
 				}
 			);
 		}
