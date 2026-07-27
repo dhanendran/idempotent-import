@@ -91,6 +91,7 @@ class Run {
 		if ( function_exists( 'wp_suspend_cache_addition' ) ) {
 			wp_suspend_cache_addition( true );
 		}
+		$this->suppressRevisions();
 		$priorHasher = $dryRun ? false : $this->useFastPasswordHashing();
 		$started     = microtime( true );
 
@@ -193,6 +194,23 @@ class Run {
 		}
 		switch_to_blog( $id );
 		return $id;
+	}
+
+	/**
+	 * Stop WordPress writing a revision for every post the rewrite phase touches.
+	 *
+	 * Setting post_parent / post_content / re-syncing an updated post goes through
+	 * wp_update_post(), which saves a revision each time. Those rows are pure noise
+	 * from a migration: the snapshot excludes revisions by design, they consume
+	 * destination post IDs, and they make the destination's post count disagree with
+	 * manifest.counts — the reconciliation check that gates cutover.
+	 *
+	 * @return void
+	 */
+	private function suppressRevisions() {
+		if ( function_exists( 'add_filter' ) ) {
+			add_filter( 'wp_revisions_to_keep', '__return_zero', PHP_INT_MAX );
+		}
 	}
 
 	/**

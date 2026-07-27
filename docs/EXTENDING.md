@@ -34,8 +34,9 @@ return [
     ],
 
     'posts' => [
-        'match_by'   => ['post_type', 'post_name'], // or add 'guid'
-        'status_map' => [],
+        'match_by'     => ['post_type', 'post_name'], // or add 'guid'
+        'status_map'   => [],
+        'preserve_ids' => false,                      // true: insert under source IDs
     ],
 
     'attachments' => [

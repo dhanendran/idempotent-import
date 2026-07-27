@@ -182,12 +182,34 @@ class Wp implements WordPress {
 		return $id ? (int) $id : null;
 	}
 
+	public function getPost( $postId ) {
+		global $wpdb;
+		$row = $wpdb->get_row(
+			$wpdb->prepare( "SELECT * FROM {$wpdb->posts} WHERE ID = %d", (int) $postId ),
+			ARRAY_A
+		);
+		return $row ? $row : null;
+	}
+
 	public function insertPost( array $data ) {
 		$id = wp_insert_post( $data, true );
 		if ( is_wp_error( $id ) ) {
 			throw new \RuntimeException( 'wp_insert_post: ' . $id->get_error_message() );
 		}
 		return (int) $id;
+	}
+
+	public function setPostsAutoIncrement( $nextId ) {
+		global $wpdb;
+		$nextId  = (int) $nextId;
+		$highest = (int) $wpdb->get_var( "SELECT COALESCE( MAX( ID ), 0 ) FROM {$wpdb->posts}" );
+		$target  = max( $nextId, $highest + 1 );
+		if ( $target < 1 ) {
+			return;
+		}
+		// Table name cannot be parameterised; $wpdb->posts is core-derived, and the
+		// value is cast to int above.
+		$wpdb->query( "ALTER TABLE {$wpdb->posts} AUTO_INCREMENT = {$target}" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 	}
 
 	public function updatePostFields( $postId, array $fields ) {

@@ -18,6 +18,7 @@ must contain a `manifest.json`.
 | `--only=<csv>` | all | Limit to entity types: `users,terms,posts,comments,options`. |
 | `--skip=<csv>` | — | Exclude entity types. |
 | `--on-conflict=<mode>` | `update` | When a previously-imported entity's content changed: `update`, `skip`, or `recreate`. |
+| `--preserve-ids` | off | Insert posts under their source IDs (`posts.preserve_ids`) instead of reissuing, and raise the posts `AUTO_INCREMENT` past the snapshot afterwards. Requires a destination with nothing at those IDs: an occupied ID is reported as a skip, never reissued. Pair with `--attachments=reference` — sideloaded media cannot keep its source ID. |
 | `--attachments=<strategy>` | `sideload` | `sideload`, `reference`, `map-existing`, or `skip`. |
 | `--default-author=<id>` | `1` | Destination user id used when a source author can't be mapped. |
 | `--options=<mode>` | `allowlist` | `none`, `allowlist`, or `all`. |

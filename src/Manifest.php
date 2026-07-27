@@ -108,6 +108,21 @@ class Manifest {
 	}
 
 	/**
+	 * The source table's AUTO_INCREMENT at export time, so content created after
+	 * the migration never reuses an ID the snapshot occupies.
+	 *
+	 * @param string $type posts|terms|users|comments
+	 * @return int 0 when the manifest did not record one.
+	 */
+	public function autoIncrement( $type ) {
+		$source = $this->source();
+		if ( ! isset( $source['auto_increment'][ $type ] ) ) {
+			return 0;
+		}
+		return (int) $source['auto_increment'][ $type ];
+	}
+
+	/**
 	 * @return array
 	 */
 	public function raw() {

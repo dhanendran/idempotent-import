@@ -66,8 +66,11 @@ class Config {
 				'match_by' => array( 'taxonomy', 'slug' ),
 			),
 			'posts'       => array(
-				'match_by'   => array( 'post_type', 'post_name' ),
-				'status_map' => array(),
+				'match_by'     => array( 'post_type', 'post_name' ),
+				'status_map'   => array(),
+				// Insert posts under their source ID instead of reissuing one. Only
+				// safe against a destination with no content at those IDs.
+				'preserve_ids' => false,
 			),
 			'comments'    => array(
 				'match_by' => array( 'comment_post_ID', 'comment_author_email', 'comment_date_gmt' ),
@@ -102,6 +105,9 @@ class Config {
 		}
 		if ( isset( $assocArgs['options'] ) ) {
 			$this->data['options']['mode'] = (string) $assocArgs['options'];
+		}
+		if ( ! empty( $assocArgs['preserve-ids'] ) ) {
+			$this->data['posts']['preserve_ids'] = true;
 		}
 		return $this;
 	}

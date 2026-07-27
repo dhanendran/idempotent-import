@@ -157,11 +157,29 @@ class FakeWordPress implements WordPress
         return null;
     }
 
+    public function getPost($postId)
+    {
+        return $this->posts[(int) $postId] ?? null;
+    }
+
+    /**
+     * Mirrors wp_insert_post(): an `import_id` claims that ID, but is ignored
+     * without error when the ID is already taken.
+     */
     public function insertPost(array $data)
     {
-        $id = $this->nextPost++;
+        $importId = (int) ($data['import_id'] ?? 0);
+        unset($data['import_id']);
+
+        $id = ($importId > 0 && !isset($this->posts[$importId])) ? $importId : $this->nextPost++;
         $this->posts[$id] = $this->unslash($data);
         return $id;
+    }
+
+    public function setPostsAutoIncrement($nextId)
+    {
+        $highest = $this->posts ? max(array_map('intval', array_keys($this->posts))) : 0;
+        $this->nextPost = max((int) $nextId, $highest + 1, $this->nextPost);
     }
 
     public function updatePostFields($postId, array $fields)

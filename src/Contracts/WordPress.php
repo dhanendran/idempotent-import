@@ -142,11 +142,34 @@ interface WordPress {
 	public function getPostIdBy( $field, $value, $postType );
 
 	/**
-	 * @param array $data wp_posts columns.
+	 * The destination row occupying a post ID, or null if the ID is free.
+	 *
+	 * Needed when IDs are preserved: the importer has to know whether an ID is
+	 * unoccupied before claiming it, and whether an occupant is the same post
+	 * (safe to adopt) or unrelated content (a collision to report).
+	 *
+	 * @param int $postId
+	 * @return array|null At least post_type and post_name.
+	 */
+	public function getPost( $postId );
+
+	/**
+	 * @param array $data wp_posts columns. An `import_id` key requests that ID
+	 *                    (WordPress silently ignores it if the ID is taken, so
+	 *                    callers must verify the returned id).
 	 * @return int New post id.
 	 * @throws \RuntimeException On failure.
 	 */
 	public function insertPost( array $data );
+
+	/**
+	 * Raise the posts table's AUTO_INCREMENT so new content cannot reuse a
+	 * migrated ID. Never lowers it.
+	 *
+	 * @param int $nextId
+	 * @return void
+	 */
+	public function setPostsAutoIncrement( $nextId );
 
 	/**
 	 * Update a subset of a post's columns (used in the rewrite phase for
