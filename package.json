@@ -1,0 +1,29 @@
+{
+  "name": "@dhanendran/idempotent-import",
+  "version": "1.0.0",
+  "description": "WP-CLI importer for darylldoyle/idempotent-export snapshots: idempotent, non-destructive, extensible.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhanendran/idempotent-import.git"
+  },
+  "homepage": "https://github.com/dhanendran/idempotent-import#readme",
+  "bugs": {
+    "url": "https://github.com/dhanendran/idempotent-import/issues"
+  },
+  "files": [
+    "src",
+    "docs",
+    "idempotent-import.php",
+    "import-map.sample.php",
+    "composer.json",
+    "README.md"
+  ],
+  "keywords": [
+    "wordpress",
+    "wp-cli",
+    "migration",
+    "import",
+    "idempotent"
+  ]
+}
