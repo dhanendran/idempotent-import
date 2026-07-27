@@ -6,3 +6,4 @@
 # Environment-specific junk (see note in README about the mounted-FS git workaround)
 /.git-BROKEN-ignore/
 /__probe__
+/composer.lock
