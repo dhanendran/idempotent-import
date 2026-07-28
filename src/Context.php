@@ -44,6 +44,9 @@ class Context {
 	/** @var bool Emit a per-entity decision line for every entity. */
 	public $verbose = false;
 
+	/** @var bool Suppress progress bars. */
+	public $quiet = false;
+
 	/**
 	 * @param WordPress $wp
 	 * @param IdMap     $idMap

@@ -2,6 +2,7 @@
 
 namespace IdempotentImport\Importer;
 
+use IdempotentImport\Contracts\WordPress;
 use IdempotentImport\PostColumns;
 
 /**
@@ -42,7 +43,7 @@ class Posts extends AbstractImporter {
 	public function createPhase() {
 		$this->warnIfContentWillBeFiltered();
 
-		foreach ( $this->snapshot->iterate( 'posts' ) as $entity ) {
+		foreach ( $this->each( 'posts' ) as $entity ) {
 			$srcId = isset( $entity['ID'] ) ? (int) $entity['ID'] : 0;
 			if ( $srcId <= 0 ) {
 				continue;
@@ -137,12 +138,28 @@ class Posts extends AbstractImporter {
 		$hash            = $this->hash( $entity );
 		$decision        = $this->ledgerDecision( 'post', $srcId, $hash );
 		if ( 'new' !== $decision['state'] ) {
-			if ( $this->destinationIntact( 'post', (int) $decision['dest'] ) ) {
+			if ( ! $this->destinationIntact( 'post', (int) $decision['dest'] ) ) {
+				$this->note( 'attachment', $srcId, "restoring: destination attachment #{$decision['dest']} no longer exists" );
+				$this->restoring = true;
+			} elseif ( 'unchanged' === $decision['state'] ) {
+				$this->note( 'attachment', $srcId, "unchanged #{$decision['dest']} (already imported, nothing to do)" );
 				$this->ctx->report->record( 'attachment', 'unchanged' );
 				return;
+			} elseif ( 'update' === $this->ctx->onConflict ) {
+				// Re-sync the record, not the binary: alt text and captions are editorial
+				// content and a delta cutover has to carry them over.
+				$destId                                      = (int) $decision['dest'];
+				$this->attachmentIds[ (string) $srcId ]      = $destId;
+				$this->attachmentOutcomes[ (string) $srcId ] = 'updated';
+				$this->ctx->idMap->rememberPost( $srcId, $destId, 'updated', $hash );
+				$this->note( 'attachment', $srcId, "updated #{$destId} (source changed)" );
+				$this->ctx->report->record( 'attachment', 'updated' );
+				return;
+			} else {
+				$this->note( 'attachment', $srcId, "conflict #{$decision['dest']} (source changed; kept destination, use --on-conflict=update)" );
+				$this->ctx->report->record( 'attachment', 'conflict' );
+				return;
 			}
-			$this->note( 'attachment', $srcId, "restoring: destination attachment #{$decision['dest']} no longer exists" );
-			$this->restoring = true;
 		}
 
 		$existing = $this->resolveExisting( 'post', $entity );
@@ -266,7 +283,7 @@ class Posts extends AbstractImporter {
 		if ( $this->ctx->dryRun ) {
 			return;
 		}
-		foreach ( $this->snapshot->iterate( 'posts' ) as $entity ) {
+		foreach ( $this->each( 'posts' ) as $entity ) {
 			$srcId = isset( $entity['ID'] ) ? (string) $entity['ID'] : '';
 			if ( '' === $srcId ) {
 				continue;
@@ -320,6 +337,10 @@ class Posts extends AbstractImporter {
 		}
 
 		if ( $fields ) {
+			// wp_update_post() re-derives status, slug and post_modified from scratch,
+			// so restate the snapshot's values and let Wp pin them — otherwise a post
+			// the insert got right is spoiled by the rewrite that follows it.
+			$fields += $this->preservedColumns( $entity );
 			try {
 				$this->ctx->wp->updatePostFields( $destId, $fields );
 			} catch ( \Throwable $e ) {
@@ -328,6 +349,24 @@ class Posts extends AbstractImporter {
 		}
 
 		$this->assignTerms( $destId, $entity );
+		$this->writePostMeta( $destId, $entity );
+	}
+
+	/**
+	 * Write a post's meta, pruning anything the snapshot does not have.
+	 *
+	 * Pruning matters in both directions: WordPress seeds its own keys on insert
+	 * (_pingme, _encloseme) that the source never had, and a key deleted at the
+	 * source would otherwise survive every future delta run.
+	 *
+	 * @param int      $destId
+	 * @param array    $entity
+	 * @param string[] $exempt Destination keys to leave alone rather than prune,
+	 *                         for meta this run deliberately withheld.
+	 * @return void
+	 */
+	private function writePostMeta( $destId, array $entity, array $exempt = array() ) {
+		$destKeys = array_values( array_diff( $this->ctx->wp->postMetaKeys( $destId ), $exempt ) );
 
 		$this->writeMeta(
 			'post',
@@ -338,8 +377,26 @@ class Posts extends AbstractImporter {
 			},
 			function ( $id, $key ) {
 				$this->ctx->wp->deletePostMeta( $id, $key );
-			}
+			},
+			$destKeys
 		);
+	}
+
+	/**
+	 * The snapshot's values for the columns WordPress would otherwise re-derive,
+	 * ready to hand to an update (see WordPress::PRESERVED_COLUMNS).
+	 *
+	 * @param array $entity
+	 * @return array
+	 */
+	private function preservedColumns( array $entity ) {
+		$cols = array();
+		foreach ( WordPress::PRESERVED_COLUMNS as $column ) {
+			if ( array_key_exists( $column, $entity ) ) {
+				$cols[ $column ] = $entity[ $column ];
+			}
+		}
+		return $this->ctx->decoder->forStorageRow( $cols );
 	}
 
 	/**
@@ -379,37 +436,49 @@ class Posts extends AbstractImporter {
 	 * @param array $entity
 	 */
 	private function rewriteAttachment( $srcId, $destId, array $entity ) {
+		$outcome = isset( $this->attachmentOutcomes[ (string) $srcId ] ) ? $this->attachmentOutcomes[ (string) $srcId ] : '';
+
+		// An attachment re-synced from a changed source needs its own columns back
+		// too — title, caption (post_excerpt) and description (post_content) are all
+		// editorial. The binary is deliberately left alone; see below.
+		$fields = array();
+		if ( 'updated' === $outcome ) {
+			$cols = PostColumns::fromEntity( $entity, $this->ctx );
+			unset( $cols['import_id'], $cols['post_parent'] );
+			$fields = $this->ctx->decoder->forStorageRow( $cols );
+		}
+
 		$srcParent = isset( $entity['post_parent'] ) ? (int) $entity['post_parent'] : 0;
 		if ( $srcParent > 0 ) {
 			$destParent = $this->ctx->idMap->post( $srcParent );
 			if ( $destParent ) {
-				try {
-					$this->ctx->wp->updatePostFields( $destId, array( 'post_parent' => $destParent ) );
-				} catch ( \Throwable $e ) {
-					$this->ctx->logger->warn( 'attachment', $srcId, 'parent update failed: ' . $e->getMessage() );
-				}
+				$fields['post_parent'] = $destParent;
 			}
 		}
 
-		$outcome = isset( $this->attachmentOutcomes[ (string) $srcId ] ) ? $this->attachmentOutcomes[ (string) $srcId ] : '';
+		if ( $fields ) {
+			$fields += $this->preservedColumns( $entity );
+			try {
+				$this->ctx->wp->updatePostFields( $destId, $fields );
+			} catch ( \Throwable $e ) {
+				$this->ctx->logger->warn( 'attachment', $srcId, 'rewrite update failed: ' . $e->getMessage() );
+			}
+		}
+
 		if ( 'matched' === $outcome ) {
 			return; // Pre-existing destination media: leave its own meta alone.
 		}
-		if ( 'created' === $outcome && isset( $entity['meta'] ) && is_array( $entity['meta'] ) ) {
+		// Meta describing the binary belongs to whichever file the destination
+		// actually holds. Only `referenced` points at the source file and can carry
+		// the source's values; a sideload derived its own, and an update never
+		// re-downloaded, so in both cases the destination's own values must stand.
+		$withheld = array();
+		if ( 'referenced' !== $outcome && isset( $entity['meta'] ) && is_array( $entity['meta'] ) ) {
 			$entity['meta'] = array_diff_key( $entity['meta'], array_flip( self::BINARY_META ) );
+			$withheld       = self::BINARY_META;
 		}
 
-		$this->writeMeta(
-			'post',
-			$destId,
-			$entity,
-			function ( $id, $key, $value ) {
-				$this->ctx->wp->addPostMeta( $id, $key, $value );
-			},
-			function ( $id, $key ) {
-				$this->ctx->wp->deletePostMeta( $id, $key );
-			}
-		);
+		$this->writePostMeta( $destId, $entity, $withheld );
 	}
 
 	/**

@@ -21,7 +21,7 @@ class Terms extends AbstractImporter {
 	}
 
 	public function createPhase() {
-		foreach ( $this->snapshot->iterate( 'terms' ) as $entity ) {
+		foreach ( $this->each( 'terms' ) as $entity ) {
 			$this->createOne( $entity );
 		}
 	}
@@ -112,7 +112,7 @@ class Terms extends AbstractImporter {
 		if ( $this->ctx->dryRun || empty( $this->writeIds ) ) {
 			return;
 		}
-		foreach ( $this->snapshot->iterate( 'terms' ) as $entity ) {
+		foreach ( $this->each( 'terms' ) as $entity ) {
 			$srcTtId = isset( $entity['term_taxonomy_id'] ) ? (string) $entity['term_taxonomy_id'] : '';
 			if ( '' === $srcTtId || ! isset( $this->writeIds[ $srcTtId ] ) ) {
 				continue;

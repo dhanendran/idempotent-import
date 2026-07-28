@@ -32,6 +32,9 @@ class DbLedger implements Ledger {
 	/** @var string */
 	private $sourceKey;
 
+	/** @var bool|null Cached table-existence check; see exists(). */
+	private $exists = null;
+
 	/**
 	 * @param \wpdb  $wpdb
 	 * @param string $sourceKey
@@ -40,6 +43,22 @@ class DbLedger implements Ledger {
 		$this->wpdb      = $wpdb;
 		$this->table     = $wpdb->prefix . 'idempotent_import_map';
 		$this->sourceKey = $sourceKey;
+	}
+
+	/**
+	 * Is the ledger table there? A dry run deliberately does not create it, so
+	 * every read has to tolerate its absence rather than raise a DB error per
+	 * entity. Resolved once per run.
+	 *
+	 * @return bool
+	 */
+	private function exists() {
+		if ( null === $this->exists ) {
+			$this->exists = (bool) $this->wpdb->get_var(
+				$this->wpdb->prepare( 'SHOW TABLES LIKE %s', $this->table )
+			);
+		}
+		return $this->exists;
 	}
 
 	/**
@@ -62,6 +81,7 @@ class DbLedger implements Ledger {
 			UNIQUE KEY src (source_key, entity_type, source_id)
 		) {$charset};";
 		$this->wpdb->query( $sql );
+		$this->exists = true;
 	}
 
 	/**
@@ -95,6 +115,9 @@ class DbLedger implements Ledger {
 	 * {@inheritDoc}
 	 */
 	public function lookup( $type, $sourceId ) {
+		if ( ! $this->exists() ) {
+			return null;
+		}
 		$row = $this->wpdb->get_row(
 			$this->wpdb->prepare(
 				"SELECT dest_id, status, content_hash FROM {$this->table}
@@ -119,6 +142,9 @@ class DbLedger implements Ledger {
 	 * {@inheritDoc}
 	 */
 	public function sqlIdentity() {
+		if ( ! $this->exists() ) {
+			return null;
+		}
 		return array(
 			'source_key' => $this->sourceKey,
 			'table'      => $this->table,
@@ -129,6 +155,9 @@ class DbLedger implements Ledger {
 	 * {@inheritDoc}
 	 */
 	public function all( $type ) {
+		if ( ! $this->exists() ) {
+			return array();
+		}
 		$rows = $this->wpdb->get_results(
 			$this->wpdb->prepare(
 				"SELECT source_id, dest_id FROM {$this->table}

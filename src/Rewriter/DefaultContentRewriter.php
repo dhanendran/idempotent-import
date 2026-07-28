@@ -20,6 +20,17 @@ use IdempotentImport\Contracts\ContentRewriter;
  */
 class DefaultContentRewriter implements ContentRewriter {
 
+	/**
+	 * The URL map, longest source URL first, built once per run.
+	 *
+	 * Rebuilding it per post meant a full ledger query plus a sort for every post
+	 * in the migration. The map is complete before the rewrite phase starts — every
+	 * attachment is created in phase 1 — so one build is enough.
+	 *
+	 * @var array{from:string[],to:string[]}|null
+	 */
+	private $urlMap = null;
+
 	public function rewrite( $html, array $post, Context $ctx ) {
 		if ( '' === (string) $html ) {
 			return $html;
@@ -79,19 +90,24 @@ class DefaultContentRewriter implements ContentRewriter {
 	 * @return string
 	 */
 	private function rewriteUrls( $html, Context $ctx ) {
-		$urls = $ctx->idMap->allUrls();
-		if ( empty( $urls ) ) {
+		if ( null === $this->urlMap ) {
+			$urls = $ctx->idMap->allUrls();
+			// Longest source URLs first, so a base URL never shadows a more specific one.
+			uksort(
+				$urls,
+				static function ( $a, $b ) {
+					return strlen( $b ) - strlen( $a );
+				}
+			);
+			$this->urlMap = array(
+				'from' => array_keys( $urls ),
+				'to'   => array_values( $urls ),
+			);
+		}
+
+		if ( empty( $this->urlMap['from'] ) ) {
 			return $html;
 		}
-		// Longest source URLs first, so a base URL never shadows a more specific one.
-		uksort(
-			$urls,
-			static function ( $a, $b ) {
-				return strlen( $b ) - strlen( $a );
-			}
-		);
-		$from = array_keys( $urls );
-		$to   = array_values( $urls );
-		return str_replace( $from, $to, $html );
+		return str_replace( $this->urlMap['from'], $this->urlMap['to'], $html );
 	}
 }

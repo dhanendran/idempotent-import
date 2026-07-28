@@ -34,7 +34,7 @@ class Users extends AbstractImporter {
 	}
 
 	public function createPhase() {
-		foreach ( $this->snapshot->iterate( 'users' ) as $entity ) {
+		foreach ( $this->each( 'users' ) as $entity ) {
 			$srcId = isset( $entity['ID'] ) ? (int) $entity['ID'] : 0;
 			if ( $srcId <= 0 ) {
 				continue;
@@ -93,8 +93,10 @@ class Users extends AbstractImporter {
 			return;
 		}
 		if ( UserDecision::REMAP === $dec->action || UserDecision::REUSE === $dec->action ) {
-			$this->ctx->idMap->rememberUser( $srcId, (int) $dec->destId, 'matched', $hash );
-			$this->matchedIds[ (string) $srcId ] = (int) $dec->destId;
+			if ( ! $this->ctx->dryRun ) {
+				$this->ctx->idMap->rememberUser( $srcId, (int) $dec->destId, 'matched', $hash );
+				$this->matchedIds[ (string) $srcId ] = (int) $dec->destId;
+			}
 			$this->note( 'user', $srcId, "matched #{$dec->destId} (config remap); attaching blog role" );
 			$this->ctx->report->record( 'user', $this->outcome( 'matched' ) );
 			return;
@@ -103,8 +105,10 @@ class Users extends AbstractImporter {
 		// CREATE: prefer an existing destination user before inserting.
 		$existing = $this->resolveExisting( 'user', $entity );
 		if ( $existing ) {
-			$this->ctx->idMap->rememberUser( $srcId, $existing, 'matched', $hash );
-			$this->matchedIds[ (string) $srcId ] = (int) $existing;
+			if ( ! $this->ctx->dryRun ) {
+				$this->ctx->idMap->rememberUser( $srcId, $existing, 'matched', $hash );
+				$this->matchedIds[ (string) $srcId ] = (int) $existing;
+			}
 			$this->note( 'user', $srcId, "matched existing #{$existing} (by user_login/user_email); attaching blog role" );
 			$this->ctx->report->record( 'user', $this->outcome( 'matched' ) );
 			return;
@@ -135,7 +139,7 @@ class Users extends AbstractImporter {
 		if ( $this->ctx->dryRun || ( empty( $this->writeIds ) && empty( $this->matchedIds ) ) ) {
 			return;
 		}
-		foreach ( $this->snapshot->iterate( 'users' ) as $entity ) {
+		foreach ( $this->each( 'users' ) as $entity ) {
 			$srcId = isset( $entity['ID'] ) ? (string) $entity['ID'] : '';
 			if ( '' === $srcId ) {
 				continue;

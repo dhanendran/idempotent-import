@@ -23,6 +23,25 @@ interface WordPress {
 	 */
 	const MISSING_LIMIT = 50000;
 
+	/**
+	 * wp_posts columns WordPress derives rather than accepts.
+	 *
+	 * wp_insert_post() re-decides post_status by comparing post_date against now,
+	 * pushes post_name through wp_unique_post_slug(), and always stamps
+	 * post_modified itself. In a migration those are the source's to dictate — a
+	 * scheduled post must not go live, a duplicate slug must not be renamed, and an
+	 * edit date must not become the import date — so implementations pin whichever
+	 * of these the caller supplied for the duration of the write.
+	 */
+	const PRESERVED_COLUMNS = array(
+		'post_status',
+		'post_name',
+		'post_date',
+		'post_date_gmt',
+		'post_modified',
+		'post_modified_gmt',
+	);
+
 	/* ---- Destination reconciliation -------------------------------------- */
 
 	/**
@@ -203,6 +222,18 @@ interface WordPress {
 	 * @return void
 	 */
 	public function updatePostMeta( $postId, $metaKey, $value );
+
+	/**
+	 * Every meta key currently on a post.
+	 *
+	 * Lets the importer drop keys the snapshot no longer has, so a key deleted at
+	 * the source (or seeded by WordPress on insert) does not linger on the
+	 * destination for the rest of the migration's life.
+	 *
+	 * @param int $postId
+	 * @return string[]
+	 */
+	public function postMetaKeys( $postId );
 
 	/**
 	 * Assign terms (destination term ids) to a post within a taxonomy.

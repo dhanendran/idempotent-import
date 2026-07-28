@@ -86,7 +86,8 @@ class Wp implements WordPress {
 	}
 
 	public function addUserMeta( $userId, $key, $value ) {
-		add_user_meta( (int) $userId, $this->userMetaKey( $key ), $value );
+		$metaId = add_user_meta( (int) $userId, $this->userMetaKey( $key ), $value );
+		$this->keepSerializedStringVerbatim( $GLOBALS['wpdb']->usermeta, 'umeta_id', $metaId, $value, (int) $userId, 'user_meta' );
 	}
 
 	public function deleteUserMeta( $userId, $key ) {
@@ -145,7 +146,8 @@ class Wp implements WordPress {
 	}
 
 	public function addTermMeta( $termId, $key, $value ) {
-		add_term_meta( (int) $termId, $key, $value );
+		$metaId = add_term_meta( (int) $termId, $key, $value );
+		$this->keepSerializedStringVerbatim( $GLOBALS['wpdb']->termmeta, 'meta_id', $metaId, $value, (int) $termId, 'term_meta' );
 	}
 
 	public function deleteTermMeta( $termId, $key ) {
@@ -192,11 +194,77 @@ class Wp implements WordPress {
 	}
 
 	public function insertPost( array $data ) {
-		$id = wp_insert_post( $data, true );
+		$id = $this->withPreservedColumns(
+			$data,
+			static function () use ( $data ) {
+				return wp_insert_post( $data, true );
+			}
+		);
 		if ( is_wp_error( $id ) ) {
 			throw new \RuntimeException( 'wp_insert_post: ' . $id->get_error_message() );
 		}
 		return (int) $id;
+	}
+
+	/**
+	 * Pin the columns WordPress would otherwise derive (see
+	 * WordPress::PRESERVED_COLUMNS) to the values the caller supplied.
+	 *
+	 * The filters run after core has finished deriving but before it unslashes and
+	 * writes, so the values handed back must be slashed — which the Decoder has
+	 * already done for everything reaching this class.
+	 *
+	 * @param array    $columns Slashed column => value, as passed to the core call.
+	 * @param callable $work
+	 * @return mixed Whatever $work returns.
+	 */
+	private function withPreservedColumns( array $columns, callable $work ) {
+		$pinned = array_intersect_key( $columns, array_flip( self::PRESERVED_COLUMNS ) );
+		if ( empty( $pinned ) || ! function_exists( 'add_filter' ) ) {
+			return $work();
+		}
+
+		// Only override keys core actually built, so this can never introduce a column.
+		$data_guard = static function ( $data ) use ( $pinned ) {
+			return array_merge( $data, array_intersect_key( $pinned, $data ) );
+		};
+
+		$guards = array(
+			'wp_insert_post_data'       => $data_guard,
+			'wp_insert_attachment_data' => $data_guard,
+		);
+
+		if ( array_key_exists( 'post_name', $pinned ) ) {
+			// The slug needs its own guards: filtering $data is not enough, because core
+			// reaches the column by two other routes. wp_unique_post_slug() renames a slug
+			// another post already holds, and after the insert core fills an empty
+			// post_name in with a direct UPDATE that no data filter sees. Answering with
+			// the source's slug — empty string included — settles both.
+			//
+			// The value has to be unslashed here: that late UPDATE writes what it is given,
+			// unlike the insert path, which unslashes after the data filter.
+			$slug = function_exists( 'wp_unslash' ) ? wp_unslash( (string) $pinned['post_name'] ) : (string) $pinned['post_name'];
+
+			$guards['pre_wp_unique_post_slug'] = static function () use ( $slug ) {
+				return $slug;
+			};
+
+			// Importing a live post whose slug a trashed post already holds makes core
+			// rename that trashed post to `slug__trashed` behind our back — corrupting a
+			// row this run already imported correctly.
+			$guards['add_trashed_suffix_to_trashed_posts'] = '__return_false';
+		}
+
+		foreach ( $guards as $hook => $callback ) {
+			add_filter( $hook, $callback, PHP_INT_MAX );
+		}
+		try {
+			return $work();
+		} finally {
+			foreach ( $guards as $hook => $callback ) {
+				remove_filter( $hook, $callback, PHP_INT_MAX );
+			}
+		}
 	}
 
 	public function setPostsAutoIncrement( $nextId ) {
@@ -214,14 +282,49 @@ class Wp implements WordPress {
 
 	public function updatePostFields( $postId, array $fields ) {
 		$fields['ID'] = (int) $postId;
-		$result       = wp_update_post( $fields, true );
+		$result       = $this->withPreservedColumns(
+			$fields,
+			static function () use ( $fields ) {
+				return wp_update_post( $fields, true );
+			}
+		);
 		if ( is_wp_error( $result ) ) {
 			throw new \RuntimeException( 'wp_update_post: ' . $result->get_error_message() );
 		}
 	}
 
 	public function addPostMeta( $postId, $key, $value ) {
-		add_post_meta( (int) $postId, $key, $value );
+		$metaId = add_post_meta( (int) $postId, $key, $value );
+		$this->keepSerializedStringVerbatim( $GLOBALS['wpdb']->postmeta, 'meta_id', $metaId, $value, (int) $postId, 'post_meta' );
+	}
+
+	/**
+	 * Put back a value that only *looks* serialized.
+	 *
+	 * maybe_serialize() re-serializes any string is_serialized() recognises, so a
+	 * meta value stored on the source as `b:0;` lands as `s:4:"b:0;";` — a different
+	 * value, which then reads back as the string "b:0;" instead of false. The meta
+	 * API offers no way to opt out, so correct the column once the row exists.
+	 *
+	 * @param string     $table
+	 * @param string     $idColumn
+	 * @param int|false  $metaId    Row id returned by the add_*_meta call.
+	 * @param mixed      $value     The slashed value that was handed to it.
+	 * @param int        $objectId  For cache invalidation.
+	 * @param string     $cacheGroup
+	 * @return void
+	 */
+	private function keepSerializedStringVerbatim( $table, $idColumn, $metaId, $value, $objectId, $cacheGroup ) {
+		if ( ! $metaId || ! is_string( $value ) ) {
+			return;
+		}
+		$raw = wp_unslash( $value );
+		if ( ! is_serialized( $raw, false ) ) {
+			return;
+		}
+		global $wpdb;
+		$wpdb->update( $table, array( 'meta_value' => $raw ), array( $idColumn => (int) $metaId ) );
+		wp_cache_delete( $objectId, $cacheGroup );
 	}
 
 	public function deletePostMeta( $postId, $key ) {
@@ -230,6 +333,16 @@ class Wp implements WordPress {
 
 	public function updatePostMeta( $postId, $metaKey, $value ) {
 		update_post_meta( (int) $postId, $metaKey, $value );
+		$metaId = (int) $GLOBALS['wpdb']->get_var( $GLOBALS['wpdb']->prepare( "SELECT meta_id FROM {$GLOBALS['wpdb']->postmeta} WHERE post_id = %d AND meta_key = %s", (int) $postId, wp_unslash( (string) $metaKey ) ) );
+		$this->keepSerializedStringVerbatim( $GLOBALS['wpdb']->postmeta, 'meta_id', $metaId, $value, (int) $postId, 'post_meta' );
+	}
+
+	public function postMetaKeys( $postId ) {
+		global $wpdb;
+		$keys = $wpdb->get_col(
+			$wpdb->prepare( "SELECT DISTINCT meta_key FROM {$wpdb->postmeta} WHERE post_id = %d", (int) $postId )
+		);
+		return array_map( 'strval', (array) $keys );
 	}
 
 	public function setPostTerms( $postId, $taxonomy, array $termIds, $append = false ) {
@@ -281,7 +394,8 @@ class Wp implements WordPress {
 	}
 
 	public function addCommentMeta( $commentId, $key, $value ) {
-		add_comment_meta( (int) $commentId, $key, $value );
+		$metaId = add_comment_meta( (int) $commentId, $key, $value );
+		$this->keepSerializedStringVerbatim( $GLOBALS['wpdb']->commentmeta, 'meta_id', $metaId, $value, (int) $commentId, 'comment_meta' );
 	}
 
 	public function deleteCommentMeta( $commentId, $key ) {

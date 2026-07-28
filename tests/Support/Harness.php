@@ -33,7 +33,8 @@ class Harness
         ?Config $config = null,
         string $onConflict = 'update',
         ?ArrayLedger $ledger = null,
-        ?Registry $registry = null
+        ?Registry $registry = null,
+        bool $dryRun = false
     ): Context {
         $snapshot = new Snapshot($dir);
         $manifest = $snapshot->manifest();
@@ -47,6 +48,7 @@ class Harness
 
         $ctx = new Context($wp, $idMap, $config, $logger, new Decoder(), $manifest, $report);
         $ctx->onConflict = $onConflict;
+        $ctx->dryRun     = $dryRun;
 
         $importers = [
             new UsersImporter($snapshot, $ctx, $registry),
