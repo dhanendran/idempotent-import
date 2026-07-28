@@ -202,7 +202,21 @@ class Run {
 	 * Swap in a cheap password hasher for the duration of the run. Imported users
 	 * get a throwaway random password and are forced to reset, so the default bcrypt
 	 * cost is pure waste and dominates import time at scale. Measured on WP 7.0.2:
-	 * 183.9ms/hash by default, 1.0ms with the swap. Returns the prior hasher.
+	 * 183.9ms/hash by default, 1.0ms with the swap.
+	 *
+	 * The weaker hash is not a weakening here: the value hashed is a random 32-char
+	 * password nobody holds, and WordPress rehashes with the current algorithm on the
+	 * first successful login after a reset.
+	 *
+	 * This deliberately uses $wp_hasher, which core began retiring in 6.8 when
+	 * wp_hash_password() moved to bcrypt. As of 7.0 that function still short-circuits
+	 * on the global, so the swap holds. When it stops — or class-phpass.php goes — the
+	 * class_exists() guard below makes this a silent no-op and imports fall back to
+	 * bcrypt: correct, but ~180x slower per created user. Re-measure before assuming
+	 * a slow import is something else.
+	 *
+	 * Only created users are hashed at all; a run where every user matches an existing
+	 * account never calls this path's beneficiary.
 	 *
 	 * @return mixed The previous $wp_hasher, to hand back to restorePasswordHashing().
 	 */

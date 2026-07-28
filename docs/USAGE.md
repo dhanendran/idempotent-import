@@ -151,6 +151,10 @@ into their second site gets no role there.
   `cron`, `active_plugins`, `siteurl` and `home` are denied even in `all` mode
   unless you remove them from the deny list in config.
 - **Passwords are never imported** (the exporter strips them). Created users get
-  a random password and must reset it.
+  a random password and must reset it. For the duration of the run a cheap hasher
+  is swapped in for that throwaway value — bcrypt costs ~180ms per created user and
+  the hash is never verified against. Nothing is weakened: the input is a random
+  32-char password nobody holds, and WordPress rehashes with the current algorithm
+  on the first login after a reset.
 - **Attachments are sideloaded from the exported URLs.** Broken source URLs
   produce skips, logged per attachment.
