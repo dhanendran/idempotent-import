@@ -77,6 +77,19 @@ it('attaches the per-blog role to a matched user without touching its profile', 
         ->and($wp->userMeta[500]['nickname'][0])->toBe('existing-nick');      // global profile untouched
 });
 
+it('keeps the destination role when users.attach_roles_to_matched is off', function (): void {
+    $wp = new FakeWordPress();
+    // Already an editor on this blog; the snapshot says administrator.
+    $wp->users[500]    = ['user_login' => 'alice', 'user_email' => 'alice@example.com'];
+    $wp->userMeta[500] = ['wp_capabilities' => [['editor' => true]]];
+
+    $config = new Config(['users' => ['attach_roles_to_matched' => false]]);
+
+    Harness::run(usersSnapshot(), $wp, $config);
+
+    expect($wp->userMeta[500]['wp_capabilities'][0])->toBe(['editor' => true]);
+});
+
 it('re-attaches the blog role when a user was removed from the site', function (): void {
     $wp     = new FakeWordPress();
     $ledger = new ArrayLedger();

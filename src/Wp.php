@@ -94,15 +94,22 @@ class Wp implements WordPress {
 	}
 
 	/**
-	 * Rebase role/level meta keys onto this blog's table prefix so imported
-	 * capabilities apply to the destination subsite (blog N uses wp_N_capabilities),
-	 * not whatever prefix the source site happened to use.
+	 * Rebase the canonical role keys onto this blog's table prefix so imported
+	 * capabilities apply to the destination subsite (blog N uses wp_N_capabilities).
+	 *
+	 * Anchored to the literal `wp_` the exporter canonicalises to, plus the standard
+	 * `wp_N_` multisite form. An open prefix class would also catch unrelated plugin
+	 * meta — `wpseo_capabilities` and the like — and collapse it onto the role key,
+	 * losing the plugin's data and the real role with it.
+	 *
+	 * A source site with a custom table prefix is the exporter's job to canonicalise;
+	 * guessing here is what caused that collision.
 	 *
 	 * @param string $key
 	 * @return string
 	 */
-	private function userMetaKey( $key ) {
-		if ( preg_match( '/^[A-Za-z0-9]+_(?:\d+_)?(capabilities|user_level)$/', (string) $key, $m ) ) {
+	protected function userMetaKey( $key ) {
+		if ( preg_match( '/^wp_(?:\d+_)?(capabilities|user_level)$/', (string) $key, $m ) ) {
 			global $wpdb;
 			return $wpdb->get_blog_prefix() . $m[1];
 		}

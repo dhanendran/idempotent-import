@@ -192,11 +192,20 @@ class Users extends AbstractImporter {
 	 * gateway rebases these keys onto the destination blog's prefix, so importing
 	 * a user's second site grants them their role there without a duplicate account.
 	 *
+	 * The snapshot's role wins: an account already holding a role on this blog is
+	 * overwritten, so a destination Editor is downgraded if the snapshot says
+	 * Subscriber. That is what a migration wants, but it is the one place matched
+	 * content is not left authoritative — set `users.attach_roles_to_matched` to
+	 * false to keep the destination's own roles instead.
+	 *
 	 * @param int   $destId
 	 * @param array $entity
 	 * @return void
 	 */
 	private function attachRole( $destId, array $entity ) {
+		if ( ! $this->ctx->config->get( 'users.attach_roles_to_matched', true ) ) {
+			return;
+		}
 		$meta = isset( $entity['meta'] ) && is_array( $entity['meta'] ) ? $entity['meta'] : array();
 		$role = array_intersect_key( $meta, array_flip( array( 'wp_capabilities', 'wp_user_level' ) ) );
 		if ( ! $role ) {

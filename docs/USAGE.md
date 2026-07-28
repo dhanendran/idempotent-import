@@ -125,6 +125,25 @@ wp idempotent-import /tmp/snapshot --blog-id=5
 `--blog-id` is required on multisite; the importer switches to that blog for the
 run and restores afterwards. One blog per invocation.
 
+Accounts are network-global but roles are per-blog, so a user matched to an existing
+account is still given the snapshot's role **for this blog**, rebasing
+`wp_capabilities` / `wp_user_level` onto the destination prefix. Their global profile
+is untouched.
+
+This is the one place matched content is not left authoritative: an account already
+holding a role on this blog is overwritten, so a destination Editor is downgraded if
+the snapshot says Subscriber. That is what a migration wants. To keep the
+destination's own roles instead:
+
+```php
+'users' => array(
+    'attach_roles_to_matched' => false,
+),
+```
+
+With it off, matched users keep whatever role they already had, and a user importing
+into their second site gets no role there.
+
 ## Safety notes
 
 - **Options are conservative by default.** In `allowlist` mode only a small safe

@@ -22,6 +22,10 @@ return array(
 		),
 		'on_missing'     => 'create', // create | skip | assign_default
 		'default_author' => 1,
+
+		// Give a matched account the snapshot's role for this blog, overwriting any
+		// role it already had here. False leaves the destination's own roles alone.
+		'attach_roles_to_matched' => true,
 	),
 
 	// ---- Terms ---------------------------------------------------------------
