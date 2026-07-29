@@ -53,3 +53,40 @@ it('produces the same destination state when run twice', function (): void {
         ->and($outcomes['post']['created'] ?? 0)->toBe(0)
         ->and($outcomes['comment']['created'] ?? 0)->toBe(0);
 });
+
+it('restores posts, terms and comments deleted outside the importer', function (): void {
+    $wp     = new FakeWordPress();
+    $ledger = new ArrayLedger();
+    $dir    = fullSnapshot();
+
+    Harness::run($dir, $wp, null, 'update', $ledger);
+
+    // Delete the destination content behind the importer's back.
+    $wp->posts    = [];
+    $wp->terms    = [];
+    $wp->comments = [];
+
+    $ctx = Harness::run($dir, $wp, null, 'update', $ledger);
+
+    $outcomes = $ctx->report->outcomes();
+    expect($wp->posts)->toHaveCount(1)
+        ->and($wp->terms)->toHaveCount(1)
+        ->and($wp->comments)->toHaveCount(1)
+        ->and($outcomes['post']['restored'])->toBe(1)
+        ->and($outcomes['term']['restored'])->toBe(1)
+        ->and($outcomes['comment']['restored'])->toBe(1);
+});
+
+it('reports a fully intact destination as unchanged, never restored', function (): void {
+    $wp     = new FakeWordPress();
+    $ledger = new ArrayLedger();
+    $dir    = fullSnapshot();
+
+    Harness::run($dir, $wp, null, 'update', $ledger);
+    $outcomes = Harness::run($dir, $wp, null, 'update', $ledger)->report->outcomes();
+
+    foreach (['user', 'term', 'post', 'comment'] as $type) {
+        expect($outcomes[$type]['restored'])->toBe(0, "{$type} should not be restored")
+            ->and($outcomes[$type]['unchanged'])->toBe(1, "{$type} should be unchanged");
+    }
+});

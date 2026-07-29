@@ -87,8 +87,9 @@ rewrite phase regardless.
 ```
 
 - **Create** is lookup-then-insert. If a mapping exists and the entity's content
-  hash is unchanged, the entity is left untouched (`matched`). If it changed,
-  `--on-conflict` decides: `update` (rewrite in place), `skip`, or `recreate`.
+  hash is unchanged, the entity is left untouched (`unchanged`). If it changed,
+  `--on-conflict` decides: `update` (rewrite in place, reported as `updated`),
+  or `skip`/`recreate` (destination kept, reported as `conflict`).
 - **Resumable.** A crashed run resumes from the ledger; re-running is safe.
 - **Multi-source.** `source_key` (derived from the manifest's site URL + blog
   id, or `--source-key`) lets one destination absorb several sources without

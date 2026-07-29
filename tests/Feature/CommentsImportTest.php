@@ -21,11 +21,13 @@ function commentsSnapshot(): string
         'meta'                 => ['rating' => ['5']],
     ]);
     $b->comment(992, [
-        'comment_post_ID' => 12345,
-        'comment_author'  => 'Cara',
-        'comment_content' => 'Agreed',
-        'comment_parent'  => 991,
-        'user_id'         => 0,
+        'comment_post_ID'      => 12345,
+        'comment_author'       => 'Cara',
+        'comment_author_email' => 'cara@example.com',
+        'comment_content'      => 'Agreed',
+        'comment_date_gmt'     => '2024-04-02 09:00:00',
+        'comment_parent'       => 991,
+        'user_id'              => 0,
     ]);
     $b->manifest();
     return $b->dir();

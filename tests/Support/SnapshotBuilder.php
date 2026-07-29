@@ -15,7 +15,9 @@ class SnapshotBuilder
     public function __construct(string $dir)
     {
         $this->dir = rtrim($dir, '/');
-        @mkdir($this->dir, 0777, true);
+        if (!is_dir($this->dir)) {
+            mkdir($this->dir, 0777, true);
+        }
     }
 
     public function dir(): string
@@ -92,7 +94,10 @@ class SnapshotBuilder
     private function write(string $relative, array $data): void
     {
         $abs = $this->dir . '/' . $relative;
-        @mkdir(dirname($abs), 0777, true);
+        $sub = dirname($abs);
+        if (!is_dir($sub)) {
+            mkdir($sub, 0777, true);
+        }
         file_put_contents($abs, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 }

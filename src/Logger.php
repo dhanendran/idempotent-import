@@ -14,12 +14,16 @@ class Logger {
 
 	const SEV_SKIP = 'skip';
 	const SEV_WARN = 'warn';
+	const SEV_INFO = 'info';
 
 	/** @var string|null Path to report.log; null in dry-run. */
 	private $logPath;
 
 	/** @var resource|null */
 	private $handle = null;
+
+	/** @var callable|null Console sink for --verbose lines. */
+	private $echo = null;
 
 	/** @var array<int, array{type:string,id:string,reason:string}> */
 	private $skips = array();
@@ -78,6 +82,31 @@ class Logger {
 	public function warn( $type, $id, $reason ) {
 		++$this->warnCount;
 		$this->write( self::SEV_WARN, $type, $id, $reason );
+	}
+
+	/**
+	 * Record an informational, per-entity decision line (--verbose). Written to
+	 * report.log when open, and echoed to the console if a sink is registered.
+	 *
+	 * @param string     $type
+	 * @param int|string $id
+	 * @param string     $reason
+	 */
+	public function info( $type, $id, $reason ) {
+		$this->write( self::SEV_INFO, $type, $id, $reason );
+		if ( is_callable( $this->echo ) ) {
+			call_user_func( $this->echo, sprintf( '%s #%s: %s', $type, (string) $id, $reason ) );
+		}
+	}
+
+	/**
+	 * Register a console sink for --verbose info lines.
+	 *
+	 * @param callable $echo fn(string $line): void
+	 * @return void
+	 */
+	public function setEcho( callable $echo ) {
+		$this->echo = $echo;
 	}
 
 	/**

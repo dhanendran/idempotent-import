@@ -56,11 +56,12 @@ class Config {
 	public static function defaults() {
 		return array(
 			'users'       => array(
-				'match_by'       => array( 'user_login', 'user_email' ),
-				'remap'          => array(),
-				'role_map'       => array(),
-				'on_missing'     => 'create',
-				'default_author' => 1,
+				'match_by'                => array( 'user_login', 'user_email' ),
+				'remap'                   => array(),
+				'role_map'                => array(),
+				'on_missing'              => 'create',
+				'default_author'          => 1,
+				'attach_roles_to_matched' => true,
 			),
 			'terms'       => array(
 				'match_by' => array( 'taxonomy', 'slug' ),

@@ -2,6 +2,7 @@
 
 namespace IdempotentImport;
 
+use IdempotentImport\Contracts\Ledger;
 use IdempotentImport\Contracts\WordPress;
 
 /**
@@ -11,6 +12,60 @@ use IdempotentImport\Contracts\WordPress;
  * treat any failure uniformly as a per-entity skip.
  */
 class Wp implements WordPress {
+
+	/* ---- Destination reconciliation -------------------------------------- */
+
+	public function missingDestIds( $type, Ledger $ledger ) {
+		global $wpdb;
+		$identity = $ledger->sqlIdentity();
+		$tables   = array(
+			'user'    => array( $wpdb->users, 'ID' ),
+			'post'    => array( $wpdb->posts, 'ID' ),
+			'term'    => array( $wpdb->term_taxonomy, 'term_taxonomy_id' ),
+			'comment' => array( $wpdb->comments, 'comment_ID' ),
+		);
+		if ( null === $identity || ! isset( $tables[ $type ] ) ) {
+			return array(); // Nothing queryable to reconcile against: assume intact.
+		}
+		list( $table, $column ) = $tables[ $type ];
+
+		// dest_id is VARCHAR; cast it so the destination side stays a PK lookup.
+		$rows = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT l.dest_id FROM {$identity['table']} l
+				 LEFT JOIN {$table} d ON d.{$column} = CAST(l.dest_id AS UNSIGNED)
+				 WHERE l.source_key = %s AND l.entity_type = %s AND d.{$column} IS NULL
+				 LIMIT %d",
+				$identity['source_key'],
+				$type,
+				self::MISSING_LIMIT + 1
+			)
+		);
+		return array_map( 'intval', (array) $rows );
+	}
+
+	public function nonMemberUserIds( Ledger $ledger ) {
+		global $wpdb;
+		$identity = $ledger->sqlIdentity();
+		if ( null === $identity ) {
+			return array();
+		}
+		// Membership is the presence of this blog's capabilities key — the same
+		// key userMetaKey() rebases role meta onto when the importer grants it.
+		$rows = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT l.dest_id FROM {$identity['table']} l
+				 LEFT JOIN {$wpdb->usermeta} m
+				   ON m.user_id = CAST(l.dest_id AS UNSIGNED) AND m.meta_key = %s
+				 WHERE l.source_key = %s AND l.entity_type = 'user' AND m.umeta_id IS NULL
+				 LIMIT %d",
+				$wpdb->get_blog_prefix() . 'capabilities',
+				$identity['source_key'],
+				self::MISSING_LIMIT + 1
+			)
+		);
+		return array_map( 'intval', (array) $rows );
+	}
 
 	/* ---- Users ----------------------------------------------------------- */
 
@@ -31,7 +86,34 @@ class Wp implements WordPress {
 	}
 
 	public function addUserMeta( $userId, $key, $value ) {
-		add_user_meta( (int) $userId, $key, $value );
+		add_user_meta( (int) $userId, $this->userMetaKey( $key ), $value );
+	}
+
+	public function deleteUserMeta( $userId, $key ) {
+		delete_user_meta( (int) $userId, $this->userMetaKey( $key ) );
+	}
+
+	/**
+	 * Rebase the canonical role keys onto this blog's table prefix so imported
+	 * capabilities apply to the destination subsite (blog N uses wp_N_capabilities).
+	 *
+	 * Anchored to the literal `wp_` the exporter canonicalises to, plus the standard
+	 * `wp_N_` multisite form. An open prefix class would also catch unrelated plugin
+	 * meta — `wpseo_capabilities` and the like — and collapse it onto the role key,
+	 * losing the plugin's data and the real role with it.
+	 *
+	 * A source site with a custom table prefix is the exporter's job to canonicalise;
+	 * guessing here is what caused that collision.
+	 *
+	 * @param string $key
+	 * @return string
+	 */
+	protected function userMetaKey( $key ) {
+		if ( preg_match( '/^wp_(?:\d+_)?(capabilities|user_level)$/', (string) $key, $m ) ) {
+			global $wpdb;
+			return $wpdb->get_blog_prefix() . $m[1];
+		}
+		return $key;
 	}
 
 	/* ---- Terms ----------------------------------------------------------- */
@@ -71,6 +153,10 @@ class Wp implements WordPress {
 
 	public function addTermMeta( $termId, $key, $value ) {
 		add_term_meta( (int) $termId, $key, $value );
+	}
+
+	public function deleteTermMeta( $termId, $key ) {
+		delete_term_meta( (int) $termId, $key );
 	}
 
 	public function updateTermParent( $termId, $taxonomy, $parentTermId ) {
@@ -121,6 +207,10 @@ class Wp implements WordPress {
 
 	public function addPostMeta( $postId, $key, $value ) {
 		add_post_meta( (int) $postId, $key, $value );
+	}
+
+	public function deletePostMeta( $postId, $key ) {
+		delete_post_meta( (int) $postId, $key );
 	}
 
 	public function updatePostMeta( $postId, $metaKey, $value ) {
@@ -177,6 +267,10 @@ class Wp implements WordPress {
 
 	public function addCommentMeta( $commentId, $key, $value ) {
 		add_comment_meta( (int) $commentId, $key, $value );
+	}
+
+	public function deleteCommentMeta( $commentId, $key ) {
+		delete_comment_meta( (int) $commentId, $key );
 	}
 
 	public function updateCommentFields( $commentId, array $fields ) {

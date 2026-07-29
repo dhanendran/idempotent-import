@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace IdempotentImport\Tests\Support;
 
+use IdempotentImport\Contracts\Ledger;
 use IdempotentImport\Contracts\WordPress;
 
 /**
@@ -30,6 +31,34 @@ class FakeWordPress implements WordPress
     private int $nextPost = 1000;
     private int $nextComment = 3000;
 
+    /* ---- Destination reconciliation ---- */
+
+    public function missingDestIds($type, Ledger $ledger)
+    {
+        $recorded = array_map('intval', array_values($ledger->all($type)));
+        if ('term' === $type) {
+            $present = array_map(static fn ($t) => (int) $t['term_taxonomy_id'], $this->terms);
+        } else {
+            $stores = ['user' => $this->users, 'post' => $this->posts, 'comment' => $this->comments];
+            if (!isset($stores[$type])) {
+                return [];
+            }
+            $present = array_map('intval', array_keys($stores[$type]));
+        }
+        return array_values(array_diff($recorded, $present));
+    }
+
+    public function nonMemberUserIds(Ledger $ledger)
+    {
+        $gone = [];
+        foreach ($ledger->all('user') as $destId) {
+            if (empty($this->userMeta[(int) $destId]['wp_capabilities'])) {
+                $gone[] = (int) $destId;
+            }
+        }
+        return $gone;
+    }
+
     /* ---- Users ---- */
 
     public function getUserIdBy($field, $value)
@@ -54,6 +83,11 @@ class FakeWordPress implements WordPress
     public function addUserMeta($userId, $key, $value)
     {
         $this->userMeta[(int) $userId][$key][] = $value;
+    }
+
+    public function deleteUserMeta($userId, $key)
+    {
+        unset($this->userMeta[(int) $userId][$key]);
     }
 
     /* ---- Terms ---- */
@@ -95,6 +129,11 @@ class FakeWordPress implements WordPress
         $this->termMeta[(int) $termId][$key][] = $value;
     }
 
+    public function deleteTermMeta($termId, $key)
+    {
+        unset($this->termMeta[(int) $termId][$key]);
+    }
+
     public function updateTermParent($termId, $taxonomy, $parentTermId)
     {
         if (isset($this->terms[(int) $termId])) {
@@ -121,7 +160,7 @@ class FakeWordPress implements WordPress
     public function insertPost(array $data)
     {
         $id = $this->nextPost++;
-        $this->posts[$id] = $data;
+        $this->posts[$id] = $this->unslash($data);
         return $id;
     }
 
@@ -129,12 +168,17 @@ class FakeWordPress implements WordPress
     {
         $postId = (int) $postId;
         unset($fields['ID']);
-        $this->posts[$postId] = array_merge($this->posts[$postId] ?? [], $fields);
+        $this->posts[$postId] = array_merge($this->posts[$postId] ?? [], $this->unslash($fields));
     }
 
     public function addPostMeta($postId, $key, $value)
     {
         $this->postMeta[(int) $postId][$key][] = $value;
+    }
+
+    public function deletePostMeta($postId, $key)
+    {
+        unset($this->postMeta[(int) $postId][$key]);
     }
 
     public function updatePostMeta($postId, $metaKey, $value)
@@ -176,6 +220,11 @@ class FakeWordPress implements WordPress
     public function addCommentMeta($commentId, $key, $value)
     {
         $this->commentMeta[(int) $commentId][$key][] = $value;
+    }
+
+    public function deleteCommentMeta($commentId, $key)
+    {
+        unset($this->commentMeta[(int) $commentId][$key]);
     }
 
     public function updateCommentFields($commentId, array $fields)
@@ -225,6 +274,24 @@ class FakeWordPress implements WordPress
             }
         }
         return null;
+    }
+
+    /**
+     * Mimic WordPress unslashing stored input (wp_insert_post/wp_update_post
+     * unslash before writing), so assertions see the logical, unslashed value.
+     *
+     * @param mixed $v
+     * @return mixed
+     */
+    private function unslash($v)
+    {
+        if (is_string($v)) {
+            return stripslashes($v);
+        }
+        if (is_array($v)) {
+            return array_map([$this, 'unslash'], $v);
+        }
+        return $v;
     }
 
     private function slugify(string $name): string

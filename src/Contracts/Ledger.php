@@ -35,8 +35,20 @@ interface Ledger {
 	/**
 	 * All mappings for a type as [sourceId => destId].
 	 *
+	 * Loads every row for the type into memory — only safe for small sets. To
+	 * reconcile against the destination at scale, use sqlIdentity() and let the
+	 * database do the join.
+	 *
 	 * @param string $type
 	 * @return array<string,string>
 	 */
 	public function all( $type );
+
+	/**
+	 * How to reach this ledger from SQL, so callers can join against it server-side
+	 * instead of pulling every mapping into PHP.
+	 *
+	 * @return array{table:string,source_key:string}|null Null when not SQL-backed.
+	 */
+	public function sqlIdentity();
 }

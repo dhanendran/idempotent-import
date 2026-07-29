@@ -14,7 +14,7 @@ must contain a `manifest.json`.
 | --- | --- | --- |
 | `--config=<file>` | — | Import-map config. `.php` returning an array, or `.json`. See [EXTENDING.md](EXTENDING.md). |
 | `--source-key=<key>` | derived | Namespaces the id-map ledger. Defaults to a hash of `manifest.source.site_url` + `blog_id`. Set explicitly when the source URL changed between exports. |
-| `--dry-run` | off | Plan only: report created/matched/skipped counts, write nothing. Always exits zero. |
+| `--dry-run` | off | Plan only: report what each entity would become, write nothing. Always exits zero. |
 | `--only=<csv>` | all | Limit to entity types: `users,terms,posts,comments,options`. |
 | `--skip=<csv>` | — | Exclude entity types. |
 | `--on-conflict=<mode>` | `update` | When a previously-imported entity's content changed: `update`, `skip`, or `recreate`. |
@@ -26,6 +26,25 @@ must contain a `manifest.json`.
 | `--blog-id=<id>` | — | Destination blog on multisite. Required there. |
 | `--quiet` | off | Suppress progress output. |
 | `--force` | off | Proceed despite an unrecognised manifest `schema_version`. |
+
+## Summary outcomes
+
+Every entity lands in exactly one outcome, printed as its own line per entity
+type; the lines sum to the type's total.
+
+| Outcome | Meaning |
+| --- | --- |
+| `created` | New — inserted into the destination. |
+| `matched` | Linked to existing destination content for the first time (e.g. a network user account already had that login/email). |
+| `updated` | Source changed since the last import; re-synced. |
+| `unchanged` | No-op — already imported and the source has not changed. |
+| `restored` | The ledger had it as imported but it was missing from the destination (deleted outside the importer), so it was re-imported. |
+| `conflict` | Source changed but the destination was kept, because `--on-conflict` is not `update`. Recurs every run until resolved. |
+| `skipped` | NOT imported — excluded by a rule, or failed. |
+
+A re-run of an unchanged snapshot puts the whole total under `unchanged` and
+ends with `Nothing to do: all N entities were already imported and unchanged.`
+That line, not the total, is the idempotence check.
 
 ## Exit codes
 
@@ -41,9 +60,9 @@ missing `--blog-id` on multisite) abort immediately with a non-zero exit.
 Next to the snapshot's `manifest.json`, a successful (non-dry-run) run writes:
 
 - `import-report.json` — outcome counts per entity type (created / matched /
-  updated / skipped), the resolved `source_key`, the source metadata copied
-  from the manifest, and a sorted `skipped[]` list. The importer's analogue of
-  the exporter's manifest.
+  updated / unchanged / conflict / skipped), the resolved `source_key`, the
+  source metadata copied from the manifest, and a sorted `skipped[]` list. The
+  importer's analogue of the exporter's manifest.
 - `report.log` — one tab-separated line per skip/warn event, in processing
   order, for `grep`/`tail` during long runs.
 
@@ -106,6 +125,25 @@ wp idempotent-import /tmp/snapshot --blog-id=5
 `--blog-id` is required on multisite; the importer switches to that blog for the
 run and restores afterwards. One blog per invocation.
 
+Accounts are network-global but roles are per-blog, so a user matched to an existing
+account is still given the snapshot's role **for this blog**, rebasing
+`wp_capabilities` / `wp_user_level` onto the destination prefix. Their global profile
+is untouched.
+
+This is the one place matched content is not left authoritative: an account already
+holding a role on this blog is overwritten, so a destination Editor is downgraded if
+the snapshot says Subscriber. That is what a migration wants. To keep the
+destination's own roles instead:
+
+```php
+'users' => array(
+    'attach_roles_to_matched' => false,
+),
+```
+
+With it off, matched users keep whatever role they already had, and a user importing
+into their second site gets no role there.
+
 ## Safety notes
 
 - **Options are conservative by default.** In `allowlist` mode only a small safe
@@ -113,6 +151,10 @@ run and restores afterwards. One blog per invocation.
   `cron`, `active_plugins`, `siteurl` and `home` are denied even in `all` mode
   unless you remove them from the deny list in config.
 - **Passwords are never imported** (the exporter strips them). Created users get
-  a random password and must reset it.
+  a random password and must reset it. For the duration of the run a cheap hasher
+  is swapped in for that throwaway value — bcrypt costs ~180ms per created user and
+  the hash is never verified against. Nothing is weakened: the input is a random
+  32-char password nobody holds, and WordPress rehashes with the current algorithm
+  on the first login after a reset.
 - **Attachments are sideloaded from the exported URLs.** Broken source URLs
   produce skips, logged per attachment.
