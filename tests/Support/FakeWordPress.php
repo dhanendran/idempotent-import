@@ -131,6 +131,15 @@ class FakeWordPress implements WordPress
         return $this->storeTerm((int) $termId, (int) $ttId, $name, $taxonomy, $args);
     }
 
+    /** Taxonomies the destination registers. Empty means "every taxonomy exists". */
+    public array $registeredTaxonomies = [];
+
+    public function taxonomyExists($taxonomy)
+    {
+        return [] === $this->registeredTaxonomies
+            || in_array((string) $taxonomy, $this->registeredTaxonomies, true);
+    }
+
     public function getTermRow($termId)
     {
         $t = $this->terms[(int) $termId] ?? null;

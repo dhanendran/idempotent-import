@@ -167,19 +167,22 @@ class Wp implements WordPress {
 			$slug = sanitize_title( wp_unslash( (string) $name ) );
 		}
 
-		if ( null === $this->getTermRow( $termId ) ) {
-			$ok = $wpdb->insert(
-				$wpdb->terms,
-				array(
-					'term_id'    => $termId,
-					'name'       => wp_unslash( (string) $name ),
-					'slug'       => $slug,
-					'term_group' => (int) ( isset( $args['term_group'] ) ? $args['term_group'] : 0 ),
-				)
-			);
-			if ( ! $ok ) {
-				throw new \RuntimeException( "could not insert wp_terms row at term_id {$termId}: " . $wpdb->last_error );
-			}
+		// A term_id of 0 asks for a fresh one: the caller is splitting a source term
+		// whose term_id is already taken (see Terms::insert()).
+		$row = array(
+			'name'       => wp_unslash( (string) $name ),
+			'slug'       => $slug,
+			'term_group' => (int) ( isset( $args['term_group'] ) ? $args['term_group'] : 0 ),
+		);
+		if ( $termId > 0 ) {
+			$row['term_id'] = $termId;
+		}
+		$ok = $wpdb->insert( $wpdb->terms, $row );
+		if ( ! $ok ) {
+			throw new \RuntimeException( "could not insert wp_terms row at term_id {$termId}: " . $wpdb->last_error );
+		}
+		if ( $termId <= 0 ) {
+			$termId = (int) $wpdb->insert_id;
 		}
 
 		$ok = $wpdb->insert(
@@ -203,6 +206,10 @@ class Wp implements WordPress {
 			'term_id'          => $termId,
 			'term_taxonomy_id' => $ttId,
 		);
+	}
+
+	public function taxonomyExists( $taxonomy ) {
+		return taxonomy_exists( (string) $taxonomy );
 	}
 
 	public function getTermRow( $termId ) {

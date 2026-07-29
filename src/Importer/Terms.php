@@ -29,6 +29,9 @@ class Terms extends AbstractImporter {
 	/** Highest source term_taxonomy_id seen, for the AUTO_INCREMENT fallback. */
 	private $highestTtId = 0;
 
+	/** @var array<string,bool> Destination taxonomy registration, resolved once each. */
+	protected $taxonomyRegistered = array();
+
 	public function type() {
 		return 'term';
 	}
@@ -82,6 +85,17 @@ class Terms extends AbstractImporter {
 				$this->note( 'term', $srcTtId, "conflict #{$decision['dest']} (source changed; kept destination, use --on-conflict=update)" );
 				$this->ctx->report->record( 'term', 'conflict' );
 			}
+			return;
+		}
+
+		// A taxonomy the destination does not register cannot hold usable terms:
+		// wp_insert_term() refuses it outright, and a preserved-ID insert writes the
+		// rows directly and so would sail past that — producing terms WordPress cannot
+		// query and post assignments that fail one at a time as warnings, while the run
+		// still reports zero skips and exits 0. Skip here so the run fails instead.
+		if ( ! $this->taxonomyRegistered( $taxonomy ) ) {
+			$this->ctx->logger->skip( 'term', $srcTtId, "taxonomy '{$taxonomy}' is not registered on the destination; register it before importing" );
+			$this->ctx->report->record( 'term', 'skipped' );
 			return;
 		}
 
@@ -154,19 +168,42 @@ class Terms extends AbstractImporter {
 			return $this->ctx->wp->insertTerm( $name, $taxonomy, $this->ctx->decoder->forStorageRow( $args ) );
 		}
 
-		// Preserved IDs make the source parent term_id valid on the destination as it
-		// stands, so it goes in at insert time rather than in the rewrite phase.
-		$args['parent']     = isset( $entity['parent'] ) ? (int) $entity['parent'] : 0;
+		// `parent` is deliberately left at 0 here even though a preserved parent
+		// term_id would already be valid: the parent's row may not exist yet, and
+		// anything reading the hierarchy mid-run (Yoast builds an indexable on every
+		// term save, calling get_term_link()) then walks into a dangling ancestor.
+		// The rewrite phase sets it once every term row is in place.
 		$args['count']      = isset( $entity['count'] ) ? (int) $entity['count'] : 0;
 		$args['term_group'] = isset( $entity['term_group'] ) ? (int) $entity['term_group'] : 0;
 
-		return $this->ctx->wp->insertTermWithIds(
-			$srcTermId,
+		// A source term_id already held by another taxonomy's term is a pre-4.4 shared
+		// term. It cannot be preserved as one row: WordPress caches terms by term_id
+		// alone, so term_exists( $id, $taxonomy ) answers with whichever taxonomy
+		// cached first, and wp_set_object_terms() then writes that taxonomy's ttid —
+		// silently attaching posts to the wrong term. Core's own 4.4 migration splits
+		// these for the same reason, so split too and say which term moved.
+		$claimTermId = $srcTermId;
+		if ( $srcTermId > 0 && $this->ctx->wp->getTermRow( $srcTermId ) ) {
+			$claimTermId = 0;
+		}
+
+		$result = $this->ctx->wp->insertTermWithIds(
+			$claimTermId,
 			$srcTtId,
 			$name,
 			$taxonomy,
 			$this->ctx->decoder->forStorageRow( $args )
 		);
+
+		if ( 0 === $claimTermId ) {
+			$this->ctx->logger->warn(
+				'term',
+				$srcTtId,
+				"source term_id {$srcTermId} is shared across taxonomies; split into {$taxonomy} term #{$result['term_id']} because WordPress cannot address a shared term_id. term_taxonomy_id {$srcTtId} is preserved, so post assignments and slug-based URLs are unaffected."
+			);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -228,16 +265,18 @@ class Terms extends AbstractImporter {
 			return;
 		}
 		// One source term_id reaching two destination term_ids means a shared term was
-		// split, so `parent` (a term_id) can no longer be resolved unambiguously. It
-		// cannot happen with preserved IDs; without them, say so rather than let the
-		// last taxonomy imported quietly win.
+		// split. Keep the first mapping: `parent` is a term_id, and re-pointing it at
+		// the later taxonomy's term is how the hierarchy ends up in the wrong taxonomy.
+		// insert() already reports the split when IDs are preserved.
 		$priorDest = $this->ctx->idMap->termId( $srcTermId );
 		if ( $priorDest && $priorDest !== (int) $destTermId ) {
-			$this->ctx->logger->warn(
-				'term',
-				$srcTtId,
-				"source term_id {$srcTermId} is shared across taxonomies and was split into destination terms {$priorDest} and {$destTermId}; parent hierarchy may resolve to the wrong one. Re-run with --preserve-ids."
-			);
+			if ( ! $this->preservingIds() ) {
+				$this->ctx->logger->warn(
+					'term',
+					$srcTtId,
+					"source term_id {$srcTermId} is shared across taxonomies and was split into destination terms {$priorDest} and {$destTermId}; a `parent` pointing at it resolves to the first. Re-run with --preserve-ids to keep term_taxonomy_ids stable."
+				);
+			}
 			return;
 		}
 		$this->ctx->idMap->rememberTermId( $srcTermId, $destTermId );
@@ -283,16 +322,15 @@ class Terms extends AbstractImporter {
 			}
 		}
 
-		// Preserved IDs already had the real parent at insert time (see insert()), so
-		// re-writing it would be a redundant wp_update_term per term; only flag a
-		// parent the run never imported.
+		// Hierarchy is set here, not at insert, so every term row already exists and no
+		// reader can walk into a dangling ancestor (see insert()).
 		$srcParent = isset( $entity['parent'] ) ? (int) $entity['parent'] : 0;
 		if ( $srcParent > 0 ) {
 			$destParent = $this->ctx->idMap->termId( $srcParent );
-			if ( ! $destParent ) {
-				$this->ctx->logger->warn( 'term', $srcTtId, "parent term_id {$srcParent} not mapped" );
-			} elseif ( ! $this->preservingIds() || isset( $this->updatedIds[ $srcTtId ] ) ) {
+			if ( $destParent ) {
 				$fields['parent'] = $destParent;
+			} else {
+				$this->ctx->logger->warn( 'term', $srcTtId, "parent term_id {$srcParent} not mapped" );
 			}
 		}
 
@@ -347,5 +385,19 @@ class Terms extends AbstractImporter {
 	 */
 	protected function preservingIds() {
 		return (bool) $this->ctx->config->get( 'terms.preserve_ids', false );
+	}
+
+	/**
+	 * Is a taxonomy registered on the destination? Cached per run: a migration has
+	 * thousands of terms across a handful of taxonomies.
+	 *
+	 * @param string $taxonomy
+	 * @return bool
+	 */
+	protected function taxonomyRegistered( $taxonomy ) {
+		if ( ! isset( $this->taxonomyRegistered[ $taxonomy ] ) ) {
+			$this->taxonomyRegistered[ $taxonomy ] = (bool) $this->ctx->wp->taxonomyExists( $taxonomy );
+		}
+		return $this->taxonomyRegistered[ $taxonomy ];
 	}
 }

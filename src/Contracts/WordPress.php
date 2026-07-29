@@ -131,15 +131,14 @@ interface WordPress {
 	 * Insert a term under its source term_id and term_taxonomy_id.
 	 *
 	 * wp_insert_term() has no `import_id` equivalent, so implementations write
-	 * wp_terms and wp_term_taxonomy directly. The wp_terms row is written only if
-	 * that term_id is free, which is what makes a source term_id shared by two
-	 * taxonomies land as one term with two taxonomy rows — the shape the source
-	 * had (spec 3.3.3).
+	 * wp_terms and wp_term_taxonomy directly.
 	 *
 	 * Callers must confirm the IDs are free first (getTermRow / getTermTaxonomyRow);
 	 * this method does not arbitrate collisions.
 	 *
-	 * @param int    $termId
+	 * @param int    $termId Pass 0 to let the destination assign one — a source
+	 *                       term_id already in use by another taxonomy's term, i.e.
+	 *                       a shared term being split (see Terms::insert()).
 	 * @param int    $ttId
 	 * @param string $name
 	 * @param string $taxonomy
@@ -148,6 +147,19 @@ interface WordPress {
 	 * @throws \RuntimeException On failure.
 	 */
 	public function insertTermWithIds( $termId, $ttId, $name, $taxonomy, array $args );
+
+	/**
+	 * Is a taxonomy registered on the destination?
+	 *
+	 * wp_insert_term() refuses an unregistered taxonomy, but a preserved-ID insert
+	 * writes the rows directly and bypasses that check — leaving terms WordPress
+	 * cannot query and post assignments that fail one by one. Callers check first so
+	 * the run reports a skip instead.
+	 *
+	 * @param string $taxonomy
+	 * @return bool
+	 */
+	public function taxonomyExists( $taxonomy );
 
 	/**
 	 * The wp_terms row occupying a term_id, or null if the ID is free.

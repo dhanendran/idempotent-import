@@ -50,13 +50,15 @@ it('carries term_group, count and description across verbatim', function (): voi
         ->and($wp->terms[7]['count'])->toBe(4);
 });
 
-it('sets the parent at insert, since a preserved parent term_id is already valid', function (): void {
+it('sets the parent in the rewrite phase, never leaving a dangling ancestor', function (): void {
     $wp = new FakeWordPress();
     Harness::run(termPreserveIdsSnapshot(), $wp, termPreserveIdsConfig());
 
+    // Inserted at parent 0, then set once every term row exists — otherwise anything
+    // reading the hierarchy mid-run (Yoast's indexable builder calls get_term_link)
+    // walks into an ancestor that has not been imported yet.
     expect($wp->terms[9]['parent'])->toBe(7)
-        // No wp_update_term needed for a term the insert already got right.
-        ->and($wp->updatedTermFields)->toBe([]);
+        ->and($wp->updatedTermFields)->toBe([['id' => 9, 'fields' => ['parent' => 7]]]);
 });
 
 it('makes a post term assignment a no-op mapping onto the same ids', function (): void {
@@ -78,7 +80,10 @@ it('makes a post term assignment a no-op mapping onto the same ids', function ()
         ->and($ctx->logger->warnCount())->toBe(0);
 });
 
-it('keeps a term_id shared across taxonomies as one term with two taxonomy rows', function (): void {
+it('splits a term_id shared across taxonomies, keeping each ttid and warning', function (): void {
+    // WordPress caches terms by term_id alone, so a shared term_id makes
+    // term_exists($id, $taxonomy) answer with whichever taxonomy cached first and
+    // wp_set_object_terms() write that taxonomy's ttid. Core 4.4 splits these; so do we.
     $b = new SnapshotBuilder(tmpdir());
     $b->term(31, ['term_id' => 7, 'taxonomy' => 'category', 'name' => 'Shared', 'slug' => 'shared']);
     $b->term(32, ['term_id' => 7, 'taxonomy' => 'post_tag', 'name' => 'Shared', 'slug' => 'shared']);
@@ -88,10 +93,15 @@ it('keeps a term_id shared across taxonomies as one term with two taxonomy rows'
     $wp  = new FakeWordPress();
     $ctx = Harness::run($b->dir(), $wp, termPreserveIdsConfig());
 
-    // The parent is unambiguous because the shared term_id was never split.
-    expect($ctx->idMap->termId(7))->toBe(7)
+    $categoryTermId = $ctx->idMap->ttIdToTermId(31);
+    $tagTermId      = $ctx->idMap->ttIdToTermId(32);
+
+    expect($categoryTermId)->toBe(7)                 // first taxonomy keeps the source id
+        ->and($tagTermId)->not->toBe(7)              // second is split onto its own
+        ->and($wp->terms[$tagTermId]['term_taxonomy_id'])->toBe(32)  // ttid still preserved
+        ->and($ctx->idMap->termId(7))->toBe(7)       // `parent` resolves to the first
         ->and($wp->terms[9]['parent'])->toBe(7)
-        ->and($ctx->logger->warnCount())->toBe(0);
+        ->and($ctx->logger->warnCount())->toBe(1);
 });
 
 it('raises both term tables auto_increment past the snapshot range', function (): void {

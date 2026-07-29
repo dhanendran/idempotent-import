@@ -121,3 +121,22 @@ it('warns when a source term_id shared across taxonomies would be split', functi
     expect($ctx->logger->warnCount())->toBe(1)
         ->and($ctx->idMap->termId(4))->toBe($ctx->idMap->ttIdToTermId(10));
 });
+
+it('skips a term whose taxonomy the destination does not register', function (): void {
+    // Measured on the real legacy instance: it registers `policy_type`, the new one
+    // registers `degree_level` and friends. A preserved-ID insert writes rows directly
+    // and would bypass wp_insert_term()'s check, leaving the run at zero skips and
+    // exit 0 while every post assignment failed as a warning.
+    $b = new SnapshotBuilder(tmpdir());
+    $b->term(31, ['term_id' => 7, 'taxonomy' => 'policy_type', 'name' => 'Terms of Use', 'slug' => 'tou']);
+    $b->manifest(['auto_increment' => ['terms' => 900, 'term_taxonomy' => 950]]);
+
+    $wp = new FakeWordPress();
+    $wp->registeredTaxonomies = ['category', 'post_tag', 'degree_level'];
+
+    $ctx = Harness::run($b->dir(), $wp, new \IdempotentImport\Config(['terms' => ['preserve_ids' => true]]), 'update', new ArrayLedger());
+
+    expect($ctx->report->outcomes()['term']['skipped'])->toBe(1)
+        ->and($ctx->logger->skipCount())->toBe(1)
+        ->and($wp->terms)->toBe([]);
+});
