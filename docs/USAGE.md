@@ -14,10 +14,11 @@ must contain a `manifest.json`.
 | --- | --- | --- |
 | `--config=<file>` | — | Import-map config. `.php` returning an array, or `.json`. See [EXTENDING.md](EXTENDING.md). |
 | `--source-key=<key>` | derived | Namespaces the id-map ledger. Defaults to a hash of `manifest.source.site_url` + `blog_id`. Set explicitly when the source URL changed between exports. |
-| `--dry-run` | off | Plan only: report what each entity would become, write nothing. Always exits zero. |
+| `--dry-run` | off | Plan only: report what each entity would become, write nothing — not the entities, not the ledger, not even the ledger table. Always exits zero. |
 | `--only=<csv>` | all | Limit to entity types: `users,terms,posts,comments,options`. |
 | `--skip=<csv>` | — | Exclude entity types. |
 | `--on-conflict=<mode>` | `update` | When a previously-imported entity's content changed: `update`, `skip`, or `recreate`. |
+| `--preserve-ids` | off | Insert posts under their source IDs (`posts.preserve_ids`) instead of reissuing, and raise the posts `AUTO_INCREMENT` past the snapshot afterwards. Requires a destination with nothing at those IDs: an occupied ID is reported as a skip, never reissued. Pair with `--attachments=reference` — sideloaded media cannot keep its source ID. |
 | `--attachments=<strategy>` | `sideload` | `sideload`, `reference`, `map-existing`, or `skip`. |
 | `--default-author=<id>` | `1` | Destination user id used when a source author can't be mapped. |
 | `--options=<mode>` | `allowlist` | `none`, `allowlist`, or `all`. |
@@ -26,6 +27,17 @@ must contain a `manifest.json`.
 | `--blog-id=<id>` | — | Destination blog on multisite. Required there. |
 | `--quiet` | off | Suppress progress output. |
 | `--force` | off | Proceed despite an unrecognised manifest `schema_version`. |
+
+## Progress
+
+Each entity type draws a bar per phase — `Importing posts`, then `Rewriting posts`
+once the id-map is complete. A dry run shows only the first, because it stops before
+the rewrite phase.
+
+Bars are drawn only to a terminal: WP-CLI substitutes a no-op when stdout is piped or
+redirected, so `wp idempotent-import … | tee run.log` prints nothing until the summary.
+Use `--verbose` there — it logs a line per entity, and suppresses the bars it would
+otherwise overwrite.
 
 ## Summary outcomes
 
@@ -45,6 +57,29 @@ type; the lines sum to the type's total.
 A re-run of an unchanged snapshot puts the whole total under `unchanged` and
 ends with `Nothing to do: all N entities were already imported and unchanged.`
 That line, not the total, is the idempotence check.
+
+## Post fidelity
+
+`wp_insert_post()` derives several columns rather than storing what it is given.
+Left alone it would decide `post_status` for itself by comparing `post_date`
+against now (publishing a scheduled post whose date has passed, and unpublishing
+a live one dated in the future), rename a `post_name` that already exists into
+`slug-2`, and stamp `post_modified` with the import time. The importer pins
+`post_status`, `post_name`, `post_date(_gmt)` and `post_modified(_gmt)` to the
+snapshot's values for the duration of every insert and update, so the
+destination row matches the source row.
+
+A post whose title, content and excerpt are all empty is accepted too: core
+rejects one, but the row exists on the source and owns an ID that references may
+point at.
+
+Post meta is a mirror, not a merge. Keys the snapshot does not have are removed
+from the post, which covers both a key deleted at the source since the last run
+and the keys WordPress seeds on insert (`_pingme`, `_encloseme`). Attachment
+meta describing the binary (`_wp_attached_file`, `_wp_attachment_metadata`) is
+exempt whenever the destination holds a file it produced itself. User, term and
+comment meta are never pruned — a user account is network-global, and its other
+sites' capabilities are none of this run's business.
 
 ## Exit codes
 

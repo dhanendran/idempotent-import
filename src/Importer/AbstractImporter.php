@@ -6,6 +6,7 @@ use IdempotentImport\Context;
 use IdempotentImport\Contracts\EntityImporter;
 use IdempotentImport\Contracts\WordPress;
 use IdempotentImport\Json;
+use IdempotentImport\Progress;
 use IdempotentImport\Registry;
 use IdempotentImport\Snapshot;
 
@@ -153,14 +154,19 @@ abstract class AbstractImporter implements EntityImporter {
 	 * (e.g. a user's subscriber wp_capabilities) would win over the snapshot, and
 	 * re-imports would accumulate duplicate rows.
 	 *
-	 * @param string        $type    post|term|user|comment
+	 * Keys are slashed alongside values: add_metadata() and delete_metadata() both
+	 * unslash the key, so a key containing a backslash arrives mangled otherwise.
+	 *
+	 * @param string        $type      post|term|user|comment
 	 * @param int           $destId
 	 * @param array         $entity
-	 * @param callable      $adder   fn(int $destId, string $key, mixed $value): void
-	 * @param callable|null $deleter fn(int $destId, string $key): void
+	 * @param callable      $adder     fn(int $destId, string $key, mixed $value): void
+	 * @param callable|null $deleter   fn(int $destId, string $key): void
+	 * @param string[]|null $destKeys  Keys currently on the destination. Any not in
+	 *                                 the snapshot are deleted; null to leave them.
 	 * @return void
 	 */
-	protected function writeMeta( $type, $destId, array $entity, callable $adder, ?callable $deleter = null ) {
+	protected function writeMeta( $type, $destId, array $entity, callable $adder, ?callable $deleter = null, ?array $destKeys = null ) {
 		$meta = isset( $entity['meta'] ) && is_array( $entity['meta'] ) ? $entity['meta'] : array();
 
 		$mapper = $this->registry->metaMapper();
@@ -168,19 +174,53 @@ abstract class AbstractImporter implements EntityImporter {
 			$meta = $mapper->mapKeys( $meta, $type, $this->ctx );
 		}
 
+		if ( null !== $destKeys && $deleter ) {
+			foreach ( array_diff( $destKeys, array_map( 'strval', array_keys( $meta ) ) ) as $stale ) {
+				$deleter( $destId, $this->ctx->decoder->forStorageValue( $stale ) );
+			}
+		}
+
 		foreach ( $meta as $key => $values ) {
 			$values = (array) $values;
 			if ( $mapper ) {
 				$values = $mapper->transformValues( $key, $values, $type, $this->ctx );
 			}
+			$storedKey = $this->ctx->decoder->forStorageValue( (string) $key );
 			if ( $deleter ) {
-				$deleter( $destId, $key );
+				$deleter( $destId, $storedKey );
 			}
 			$context = "{$type}.meta.{$key}";
 			foreach ( $values as $value ) {
 				$value = $this->rewriteValue( $value, $context );
-				$adder( $destId, $key, $this->ctx->decoder->forStorageValue( $value ) );
+				$adder( $destId, $storedKey, $this->ctx->decoder->forStorageValue( $value ) );
 			}
+		}
+	}
+
+	/**
+	 * Iterate a snapshot subdirectory behind a progress bar for the current phase.
+	 *
+	 * Both phases walk the same set, so each importer draws two bars over a run.
+	 * The bar is sized from the manifest rather than by counting files, which would
+	 * mean a second walk of the tree before any work could start.
+	 *
+	 * @param string $subdir posts|users|terms|comments
+	 * @return \Generator<string,array>
+	 */
+	protected function each( $subdir ) {
+		$verb = 'rewrite' === $this->ctx->phase ? 'Rewriting' : 'Importing';
+		$bar  = new Progress(
+			"{$verb} {$subdir}",
+			$this->ctx->manifest->count( $subdir ),
+			empty( $this->ctx->quiet ) && empty( $this->ctx->verbose )
+		);
+		try {
+			foreach ( $this->snapshot->iterate( $subdir ) as $relative => $entity ) {
+				yield $relative => $entity;
+				$bar->tick();
+			}
+		} finally {
+			$bar->finish();
 		}
 	}
 

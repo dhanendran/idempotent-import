@@ -22,7 +22,7 @@ class Run {
 	 */
 	public function execute( array $args, array $assoc_args ) {
 		$dryRun  = ! empty( $assoc_args['dry-run'] );
-		$quiet   = ! empty( $assoc_args['quiet'] );
+		$quiet   = ! empty( $assoc_args['quiet'] ) || $this->globalQuiet();
 		$verbose = ! empty( $assoc_args['verbose'] );
 
 		$snapshotDir = isset( $args[0] ) ? (string) $args[0] : '';
@@ -58,7 +58,7 @@ class Run {
 			: new Config();
 		$config->applyCliOverrides( $assoc_args );
 
-		$ledger = $this->buildLedger( $sourceKey );
+		$ledger = $this->buildLedger( $sourceKey, $dryRun );
 		$idMap  = new IdMap( $ledger );
 
 		$logger = new Logger( $dryRun ? null : ( rtrim( $snapshotDir, '/\\' ) . '/report.log' ) );
@@ -80,6 +80,7 @@ class Run {
 		$ctx->onConflict = isset( $assoc_args['on-conflict'] ) ? (string) $assoc_args['on-conflict'] : 'update';
 		$ctx->dryRun     = $dryRun;
 		$ctx->verbose    = $verbose;
+		$ctx->quiet      = $quiet;
 
 		$registry = Bootstrap::defaultRegistry();
 		Bootstrap::applyProjectExtensions( $registry, $ctx );
@@ -91,6 +92,8 @@ class Run {
 		if ( function_exists( 'wp_suspend_cache_addition' ) ) {
 			wp_suspend_cache_addition( true );
 		}
+		$this->suppressRevisions();
+		$this->allowEmptyPosts();
 		$priorHasher = $dryRun ? false : $this->useFastPasswordHashing();
 		$started     = microtime( true );
 
@@ -167,16 +170,31 @@ class Run {
 
 	/**
 	 * @param string $sourceKey
+	 * @param bool   $dryRun
 	 * @return Contracts\Ledger
 	 */
-	private function buildLedger( $sourceKey ) {
+	private function buildLedger( $sourceKey, $dryRun ) {
 		global $wpdb;
 		if ( isset( $wpdb ) && is_object( $wpdb ) ) {
 			$ledger = new DbLedger( $wpdb, $sourceKey );
-			$ledger->ensureTable();
+			// A dry run must not touch the destination, and CREATE TABLE is a write.
+			// Reads against a table that does not exist yet simply find nothing, which
+			// is the correct answer for a destination that has never been imported to.
+			if ( ! $dryRun ) {
+				$ledger->ensureTable();
+			}
 			return $ledger;
 		}
 		return new ArrayLedger();
+	}
+
+	/**
+	 * WP-CLI claims --quiet as a global, so it never reaches $assoc_args.
+	 *
+	 * @return bool
+	 */
+	protected function globalQuiet() {
+		return class_exists( '\WP_CLI' ) && (bool) \WP_CLI::get_config( 'quiet' );
 	}
 
 	/**
@@ -196,6 +214,39 @@ class Run {
 		}
 		switch_to_blog( $id );
 		return $id;
+	}
+
+	/**
+	 * Stop WordPress writing a revision for every post the rewrite phase touches.
+	 *
+	 * Setting post_parent / post_content / re-syncing an updated post goes through
+	 * wp_update_post(), which saves a revision each time. Those rows are pure noise
+	 * from a migration: the snapshot excludes revisions by design, they consume
+	 * destination post IDs, and they make the destination's post count disagree with
+	 * manifest.counts — the reconciliation check that gates cutover.
+	 *
+	 * @return void
+	 */
+	private function suppressRevisions() {
+		if ( function_exists( 'add_filter' ) ) {
+			add_filter( 'wp_revisions_to_keep', '__return_zero', PHP_INT_MAX );
+		}
+	}
+
+	/**
+	 * Let a post with an empty title, content and excerpt through.
+	 *
+	 * wp_insert_post() rejects one outright, which is the right call for an editor
+	 * but not for a migration: the row exists on the source, it owns an ID that
+	 * URLs and references may point at, and refusing it means the run can never
+	 * reach the zero-skip state that gates cutover.
+	 *
+	 * @return void
+	 */
+	private function allowEmptyPosts() {
+		if ( function_exists( 'add_filter' ) ) {
+			add_filter( 'wp_insert_post_empty_content', '__return_false', PHP_INT_MAX );
+		}
 	}
 
 	/**

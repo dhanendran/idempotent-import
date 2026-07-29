@@ -23,6 +23,25 @@ interface WordPress {
 	 */
 	const MISSING_LIMIT = 50000;
 
+	/**
+	 * wp_posts columns WordPress derives rather than accepts.
+	 *
+	 * wp_insert_post() re-decides post_status by comparing post_date against now,
+	 * pushes post_name through wp_unique_post_slug(), and always stamps
+	 * post_modified itself. In a migration those are the source's to dictate — a
+	 * scheduled post must not go live, a duplicate slug must not be renamed, and an
+	 * edit date must not become the import date — so implementations pin whichever
+	 * of these the caller supplied for the duration of the write.
+	 */
+	const PRESERVED_COLUMNS = array(
+		'post_status',
+		'post_name',
+		'post_date',
+		'post_date_gmt',
+		'post_modified',
+		'post_modified_gmt',
+	);
+
 	/* ---- Destination reconciliation -------------------------------------- */
 
 	/**
@@ -142,11 +161,34 @@ interface WordPress {
 	public function getPostIdBy( $field, $value, $postType );
 
 	/**
-	 * @param array $data wp_posts columns.
+	 * The destination row occupying a post ID, or null if the ID is free.
+	 *
+	 * Needed when IDs are preserved: the importer has to know whether an ID is
+	 * unoccupied before claiming it, and whether an occupant is the same post
+	 * (safe to adopt) or unrelated content (a collision to report).
+	 *
+	 * @param int $postId
+	 * @return array|null At least post_type and post_name.
+	 */
+	public function getPost( $postId );
+
+	/**
+	 * @param array $data wp_posts columns. An `import_id` key requests that ID
+	 *                    (WordPress silently ignores it if the ID is taken, so
+	 *                    callers must verify the returned id).
 	 * @return int New post id.
 	 * @throws \RuntimeException On failure.
 	 */
 	public function insertPost( array $data );
+
+	/**
+	 * Raise the posts table's AUTO_INCREMENT so new content cannot reuse a
+	 * migrated ID. Never lowers it.
+	 *
+	 * @param int $nextId
+	 * @return void
+	 */
+	public function setPostsAutoIncrement( $nextId );
 
 	/**
 	 * Update a subset of a post's columns (used in the rewrite phase for
@@ -180,6 +222,18 @@ interface WordPress {
 	 * @return void
 	 */
 	public function updatePostMeta( $postId, $metaKey, $value );
+
+	/**
+	 * Every meta key currently on a post.
+	 *
+	 * Lets the importer drop keys the snapshot no longer has, so a key deleted at
+	 * the source (or seeded by WordPress on insert) does not linger on the
+	 * destination for the rest of the migration's life.
+	 *
+	 * @param int $postId
+	 * @return string[]
+	 */
+	public function postMetaKeys( $postId );
 
 	/**
 	 * Assign terms (destination term ids) to a post within a taxonomy.

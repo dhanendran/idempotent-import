@@ -117,30 +117,64 @@ class Snapshot {
 	}
 
 	/**
-	 * Sorted list of *.json files under a subdirectory as [relative => absolute].
+	 * Yield *.json files under a subdirectory as relative => absolute, in sorted
+	 * path order.
+	 *
+	 * Only one directory's entries are held at a time. Collecting every path first
+	 * and sorting the lot would put millions of strings in memory for a large
+	 * snapshot — the very thing the streaming iterate() exists to avoid.
 	 *
 	 * @param string $subdir
-	 * @return array<string,string>
+	 * @return \Generator<string,string>
 	 */
 	private function files( $subdir ) {
 		$base = $this->root . '/' . trim( $subdir, '/' );
 		if ( ! is_dir( $base ) ) {
-			return array();
+			return;
 		}
-		$out  = array();
-		$iter = new \RecursiveIteratorIterator(
-			new \RecursiveDirectoryIterator( $base, \FilesystemIterator::SKIP_DOTS )
-		);
-		foreach ( $iter as $file ) {
-			if ( ! $file->isFile() || 'json' !== strtolower( $file->getExtension() ) ) {
-				continue;
+		yield from $this->walk( $base );
+	}
+
+	/**
+	 * One directory, in the order a sort of full relative paths would produce.
+	 *
+	 * A directory sorts under its name plus the separator, which is what the path
+	 * comparison it stands in for would see. That keeps files and subdirectories
+	 * correctly interleaved ("abc.json" before "abc/1.json", "a/1.json" before
+	 * "b.json") rather than assuming one always precedes the other.
+	 *
+	 * @param string $dir
+	 * @return \Generator<string,string>
+	 */
+	private function walk( $dir ) {
+		$entries = array();
+
+		foreach ( new \FilesystemIterator( $dir, \FilesystemIterator::SKIP_DOTS ) as $entry ) {
+			if ( $entry->isDir() ) {
+				$entries[ $entry->getFilename() . '/' ] = array( true, $entry->getPathname() );
+			} elseif ( $entry->isFile() && 'json' === strtolower( $entry->getExtension() ) ) {
+				$entries[ $entry->getFilename() ] = array( false, $entry->getPathname() );
 			}
-			$abs      = $file->getPathname();
-			$relative = ltrim( substr( $abs, strlen( $this->root ) ), '/\\' );
-			$out[ str_replace( '\\', '/', $relative ) ] = $abs;
 		}
-		ksort( $out, SORT_STRING );
-		return $out;
+
+		ksort( $entries, SORT_STRING );
+
+		foreach ( $entries as $entry ) {
+			list( $isDir, $abs ) = $entry;
+			if ( $isDir ) {
+				yield from $this->walk( $abs );
+			} else {
+				yield $this->relative( $abs ) => $abs;
+			}
+		}
+	}
+
+	/**
+	 * @param string $absolute
+	 * @return string
+	 */
+	private function relative( $absolute ) {
+		return str_replace( '\\', '/', ltrim( substr( $absolute, strlen( $this->root ) ), '/\\' ) );
 	}
 
 	/**

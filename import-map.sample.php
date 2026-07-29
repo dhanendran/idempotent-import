@@ -35,8 +35,11 @@ return array(
 
 	// ---- Posts ---------------------------------------------------------------
 	'posts'       => array(
-		'match_by'   => array( 'post_type', 'post_name' ), // add 'guid' to match on GUID
-		'status_map' => array(),
+		'match_by'     => array( 'post_type', 'post_name' ), // add 'guid' to match on GUID
+		'status_map'   => array(),
+		// true: insert posts under their source IDs rather than reissuing. Needs a
+		// destination with no content at those IDs; an occupied ID becomes a skip.
+		'preserve_ids' => false,
 	),
 
 	// ---- Attachments ---------------------------------------------------------

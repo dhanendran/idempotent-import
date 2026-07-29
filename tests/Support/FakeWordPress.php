@@ -25,6 +25,12 @@ class FakeWordPress implements WordPress
     public array $options = [];     // name => [value, autoload]
     public array $attachmentUrls = []; // id => url
 
+    /** Meta WordPress itself would seed on insert, e.g. _pingme. key => [values] */
+    public array $onInsertPostMeta = [];
+
+    /** Every updatePostFields() call, as ['id' => int, 'fields' => array]. */
+    public array $updatedPostFields = [];
+
     private int $nextUser = 100;
     private int $nextTermId = 200;
     private int $nextTtId = 500;
@@ -82,12 +88,12 @@ class FakeWordPress implements WordPress
 
     public function addUserMeta($userId, $key, $value)
     {
-        $this->userMeta[(int) $userId][$key][] = $value;
+        $this->userMeta[(int) $userId][$this->unslash($key)][] = $value;
     }
 
     public function deleteUserMeta($userId, $key)
     {
-        unset($this->userMeta[(int) $userId][$key]);
+        unset($this->userMeta[(int) $userId][$this->unslash($key)]);
     }
 
     /* ---- Terms ---- */
@@ -126,12 +132,12 @@ class FakeWordPress implements WordPress
 
     public function addTermMeta($termId, $key, $value)
     {
-        $this->termMeta[(int) $termId][$key][] = $value;
+        $this->termMeta[(int) $termId][$this->unslash($key)][] = $value;
     }
 
     public function deleteTermMeta($termId, $key)
     {
-        unset($this->termMeta[(int) $termId][$key]);
+        unset($this->termMeta[(int) $termId][$this->unslash($key)]);
     }
 
     public function updateTermParent($termId, $taxonomy, $parentTermId)
@@ -157,33 +163,61 @@ class FakeWordPress implements WordPress
         return null;
     }
 
+    public function getPost($postId)
+    {
+        return $this->posts[(int) $postId] ?? null;
+    }
+
+    /**
+     * Mirrors wp_insert_post(): an `import_id` claims that ID, but is ignored
+     * without error when the ID is already taken.
+     */
     public function insertPost(array $data)
     {
-        $id = $this->nextPost++;
+        $importId = (int) ($data['import_id'] ?? 0);
+        unset($data['import_id']);
+
+        $id = ($importId > 0 && !isset($this->posts[$importId])) ? $importId : $this->nextPost++;
         $this->posts[$id] = $this->unslash($data);
+        foreach ($this->onInsertPostMeta as $key => $values) {
+            $this->postMeta[$id][$key] = $values;
+        }
         return $id;
+    }
+
+    public function setPostsAutoIncrement($nextId)
+    {
+        $highest = $this->posts ? max(array_map('intval', array_keys($this->posts))) : 0;
+        $this->nextPost = max((int) $nextId, $highest + 1, $this->nextPost);
     }
 
     public function updatePostFields($postId, array $fields)
     {
         $postId = (int) $postId;
         unset($fields['ID']);
-        $this->posts[$postId] = array_merge($this->posts[$postId] ?? [], $this->unslash($fields));
+        $fields = $this->unslash($fields);
+        $this->updatedPostFields[] = ['id' => $postId, 'fields' => $fields];
+        $this->posts[$postId] = array_merge($this->posts[$postId] ?? [], $fields);
     }
 
     public function addPostMeta($postId, $key, $value)
     {
-        $this->postMeta[(int) $postId][$key][] = $value;
+        $this->postMeta[(int) $postId][$this->unslash($key)][] = $value;
     }
 
     public function deletePostMeta($postId, $key)
     {
-        unset($this->postMeta[(int) $postId][$key]);
+        unset($this->postMeta[(int) $postId][$this->unslash($key)]);
     }
 
     public function updatePostMeta($postId, $metaKey, $value)
     {
-        $this->postMeta[(int) $postId][$metaKey] = [$value];
+        $this->postMeta[(int) $postId][$this->unslash($metaKey)] = [$value];
+    }
+
+    public function postMetaKeys($postId)
+    {
+        return array_map('strval', array_keys($this->postMeta[(int) $postId] ?? []));
     }
 
     public function setPostTerms($postId, $taxonomy, array $termIds, $append = false)
@@ -219,12 +253,12 @@ class FakeWordPress implements WordPress
 
     public function addCommentMeta($commentId, $key, $value)
     {
-        $this->commentMeta[(int) $commentId][$key][] = $value;
+        $this->commentMeta[(int) $commentId][$this->unslash($key)][] = $value;
     }
 
     public function deleteCommentMeta($commentId, $key)
     {
-        unset($this->commentMeta[(int) $commentId][$key]);
+        unset($this->commentMeta[(int) $commentId][$this->unslash($key)]);
     }
 
     public function updateCommentFields($commentId, array $fields)

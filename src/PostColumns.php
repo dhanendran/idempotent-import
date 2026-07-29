@@ -5,10 +5,15 @@ namespace IdempotentImport;
 /**
  * Extracts the wp_posts column set for an insert from a decoded post entity.
  *
- * Derived export-only fields (meta, terms, comments, attachment_url), the
- * source ID, and comment_count are dropped. post_author is resolved through the
- * IdMap now (users are imported first); post_parent is deferred to the rewrite
- * phase and set to 0 here to avoid a forward reference.
+ * Derived export-only fields (meta, terms, comments, attachment_url) and
+ * comment_count are dropped. post_author is resolved through the IdMap now
+ * (users are imported first); post_parent is deferred to the rewrite phase and
+ * set to 0 here to avoid a forward reference.
+ *
+ * The source ID is normally dropped and the destination reissues one. With
+ * `posts.preserve_ids` it is passed through as `import_id`, which asks
+ * wp_insert_post() to claim that exact ID — required wherever URLs must keep
+ * resolving, since `?p={ID}` and ID-bearing references stay valid.
  */
 class PostColumns {
 
@@ -50,9 +55,33 @@ class PostColumns {
 
 		$sourceAuthor      = isset( $entity['post_author'] ) ? (int) $entity['post_author'] : 0;
 		$cols['post_author'] = self::resolveAuthor( $sourceAuthor, $ctx );
-		$cols['post_parent'] = 0; // Deferred to the rewrite phase.
+
+		$sourceId   = isset( $entity['ID'] ) ? (int) $entity['ID'] : 0;
+		$preserving = self::preservingIds( $ctx );
+
+		if ( $sourceId > 0 && $preserving ) {
+			$cols['import_id'] = $sourceId;
+		}
+
+		// A hierarchical post's slug only has to be unique among its siblings, so the
+		// parent has to be in place before wp_unique_post_slug() runs — insert with
+		// post_parent = 0 and two pages that legitimately share a slug under different
+		// parents get silently renamed to `-2`, changing their URL. When IDs are
+		// preserved the destination parent id *is* the source one, so there is no
+		// forward reference to defer (wp_insert_post does not require it to exist yet).
+		$cols['post_parent'] = ( $preserving && isset( $entity['post_parent'] ) )
+			? (int) $entity['post_parent']
+			: 0;
 
 		return $cols;
+	}
+
+	/**
+	 * @param Context $ctx
+	 * @return bool
+	 */
+	public static function preservingIds( Context $ctx ) {
+		return (bool) $ctx->config->get( 'posts.preserve_ids', false );
 	}
 
 	/**

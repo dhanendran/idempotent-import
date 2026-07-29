@@ -34,7 +34,7 @@ class Comments extends AbstractImporter {
 	}
 
 	public function createPhase() {
-		foreach ( $this->snapshot->iterate( 'comments' ) as $entity ) {
+		foreach ( $this->each( 'comments' ) as $entity ) {
 			$srcId = isset( $entity['comment_ID'] ) ? (int) $entity['comment_ID'] : 0;
 			if ( $srcId <= 0 ) {
 				continue;
@@ -72,7 +72,9 @@ class Comments extends AbstractImporter {
 
 		$existing = $this->resolveExisting( 'comment', $entity );
 		if ( $existing ) {
-			$this->ctx->idMap->rememberComment( $srcId, $existing, 'matched', $hash );
+			if ( ! $this->ctx->dryRun ) {
+				$this->ctx->idMap->rememberComment( $srcId, $existing, 'matched', $hash );
+			}
 			$this->note( 'comment', $srcId, "matched existing #{$existing} (by post/author/date)" );
 			$this->ctx->report->record( 'comment', $this->outcome( 'matched' ) );
 			return;
@@ -115,7 +117,7 @@ class Comments extends AbstractImporter {
 		if ( $this->ctx->dryRun || empty( $this->writeIds ) ) {
 			return;
 		}
-		foreach ( $this->snapshot->iterate( 'comments' ) as $entity ) {
+		foreach ( $this->each( 'comments' ) as $entity ) {
 			$srcId = isset( $entity['comment_ID'] ) ? (string) $entity['comment_ID'] : '';
 			if ( '' === $srcId || ! isset( $this->writeIds[ $srcId ] ) ) {
 				continue;
