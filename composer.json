@@ -1,6 +1,6 @@
 {
-    "name": "fueled/idempotent-import",
-    "description": "WP-CLI command that imports a deterministic JSON snapshot produced by fueled/idempotent-export into a WordPress site, idempotently and non-destructively.",
+    "name": "dhanendran/idempotent-import",
+    "description": "WP-CLI command that imports a deterministic JSON snapshot produced by WP Idempotent Export (darylldoyle/idempotent-export) into a WordPress site, idempotently and non-destructively.",
     "type": "wp-cli-package",
     "license": "MIT",
     "require": {

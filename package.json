@@ -1,6 +1,6 @@
 {
   "name": "@dhanendran/idempotent-import",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "WP-CLI importer for darylldoyle/idempotent-export snapshots: idempotent, non-destructive, extensible.",
   "license": "MIT",
   "repository": {
