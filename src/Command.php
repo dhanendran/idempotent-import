@@ -40,10 +40,13 @@ class Command {
 	 *   One of: update, skip, recreate. Default: update.
 	 *
 	 * [--preserve-ids]
-	 * : Insert posts under their source IDs instead of reissuing, and raise the posts
-	 *   AUTO_INCREMENT past the snapshot afterwards. Requires a destination with no
-	 *   content at those IDs — an occupied ID is reported as a skip, never reissued.
-	 *   Use with --attachments=reference; sideloaded media cannot keep its source ID.
+	 * : Insert posts under their source IDs, and terms under their source term_id and
+	 *   term_taxonomy_id, instead of reissuing — then raise those tables' AUTO_INCREMENT
+	 *   past the snapshot. Requires a destination with no content at those IDs — an
+	 *   occupied ID is reported as a skip, never reissued. Note `wp site empty` re-seeds
+	 *   a default category, so delete it unless the source holds the same term at the
+	 *   same ID. Use with --attachments=reference; sideloaded media cannot keep its
+	 *   source ID.
 	 *
 	 * [--attachments=<strategy>]
 	 * : Attachment handling strategy: sideload, reference, map-existing, skip. Default: sideload.
@@ -77,7 +80,7 @@ class Command {
 	 *     wp idempotent-import /tmp/snapshot
 	 *     wp idempotent-import /tmp/snapshot --config=migration-map.php --attachments=sideload
 	 *     wp idempotent-import /tmp/snapshot --only=posts,terms --dry-run
-	 *     wp idempotent-import /tmp/snapshot --only=posts --preserve-ids --attachments=reference
+	 *     wp idempotent-import /tmp/snapshot --only=users,terms,posts --preserve-ids --attachments=reference
 	 *
 	 * @when after_wp_load
 	 *

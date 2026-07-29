@@ -31,6 +31,12 @@ class FakeWordPress implements WordPress
     /** Every updatePostFields() call, as ['id' => int, 'fields' => array]. */
     public array $updatedPostFields = [];
 
+    /** Every updateTermFields() call, as ['id' => int, 'fields' => array]. */
+    public array $updatedTermFields = [];
+
+    /** Every setTermsAutoIncrement() call, as ['terms' => int, 'term_taxonomy' => int]. */
+    public array $termsAutoIncrement = [];
+
     private int $nextUser = 100;
     private int $nextTermId = 200;
     private int $nextTtId = 500;
@@ -117,16 +123,62 @@ class FakeWordPress implements WordPress
                 return ['term_id' => (int) $tid, 'term_taxonomy_id' => (int) $t['term_taxonomy_id']];
             }
         }
-        $termId = $this->nextTermId++;
-        $ttId   = $this->nextTtId++;
+        return $this->storeTerm($this->nextTermId++, $this->nextTtId++, $name, $taxonomy, $args);
+    }
+
+    public function insertTermWithIds($termId, $ttId, $name, $taxonomy, array $args)
+    {
+        return $this->storeTerm((int) $termId, (int) $ttId, $name, $taxonomy, $args);
+    }
+
+    public function getTermRow($termId)
+    {
+        $t = $this->terms[(int) $termId] ?? null;
+        if (!$t) {
+            return null;
+        }
+        return [
+            'term_id'    => (int) $termId,
+            'name'       => (string) $t['name'],
+            'slug'       => (string) $t['slug'],
+            'term_group' => (int) ($t['term_group'] ?? 0),
+        ];
+    }
+
+    public function getTermTaxonomyRow($ttId)
+    {
+        foreach ($this->terms as $tid => $t) {
+            if ((int) $t['term_taxonomy_id'] === (int) $ttId) {
+                return [
+                    'term_taxonomy_id' => (int) $ttId,
+                    'term_id'          => (int) $tid,
+                    'taxonomy'         => (string) $t['taxonomy'],
+                    'parent'           => (int) $t['parent'],
+                ];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The store behind both insert paths. Keyed by term_id, so a term_id shared
+     * across taxonomies cannot be represented — which is exactly why the importer
+     * must not split one (see Terms::recordMaps).
+     */
+    private function storeTerm(int $termId, int $ttId, string $name, string $taxonomy, array $args): array
+    {
         $this->terms[$termId] = [
-            'name'             => $name,
-            'slug'             => $slug,
+            'name'             => $this->unslash($name),
+            'slug'             => $this->unslash($args['slug'] ?? $this->slugify($name)),
             'taxonomy'         => $taxonomy,
             'parent'           => (int) ($args['parent'] ?? 0),
-            'description'      => $args['description'] ?? '',
+            'description'      => $this->unslash($args['description'] ?? ''),
+            'term_group'       => (int) ($args['term_group'] ?? 0),
+            'count'            => (int) ($args['count'] ?? 0),
             'term_taxonomy_id' => $ttId,
         ];
+        $this->nextTermId = max($this->nextTermId, $termId + 1);
+        $this->nextTtId   = max($this->nextTtId, $ttId + 1);
         return ['term_id' => $termId, 'term_taxonomy_id' => $ttId];
     }
 
@@ -140,11 +192,32 @@ class FakeWordPress implements WordPress
         unset($this->termMeta[(int) $termId][$this->unslash($key)]);
     }
 
-    public function updateTermParent($termId, $taxonomy, $parentTermId)
+    public function updateTermFields($termId, $taxonomy, array $fields)
     {
-        if (isset($this->terms[(int) $termId])) {
-            $this->terms[(int) $termId]['parent'] = (int) $parentTermId;
+        $termId = (int) $termId;
+        if (!isset($this->terms[$termId])) {
+            return;
         }
+        $this->updatedTermFields[] = ['id' => $termId, 'fields' => $fields];
+        foreach (['name', 'slug', 'description'] as $column) {
+            if (array_key_exists($column, $fields)) {
+                $this->terms[$termId][$column] = $this->unslash($fields[$column]);
+            }
+        }
+        foreach (['parent', 'term_group'] as $column) {
+            if (array_key_exists($column, $fields)) {
+                $this->terms[$termId][$column] = (int) $fields[$column];
+            }
+        }
+    }
+
+    public function setTermsAutoIncrement($nextTermId, $nextTtId)
+    {
+        $this->termsAutoIncrement[] = ['terms' => (int) $nextTermId, 'term_taxonomy' => (int) $nextTtId];
+        $highestTerm = $this->terms ? max(array_map('intval', array_keys($this->terms))) : 0;
+        $highestTt   = $this->terms ? max(array_map(static fn ($t) => (int) $t['term_taxonomy_id'], $this->terms)) : 0;
+        $this->nextTermId = max((int) $nextTermId, $highestTerm + 1, $this->nextTermId);
+        $this->nextTtId   = max((int) $nextTtId, $highestTt + 1, $this->nextTtId);
     }
 
     /* ---- Posts ---- */

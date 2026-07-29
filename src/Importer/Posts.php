@@ -407,11 +407,30 @@ class Posts extends AbstractImporter {
 		$terms = isset( $entity['terms'] ) && is_array( $entity['terms'] ) ? $entity['terms'] : array();
 		foreach ( $terms as $taxonomy => $srcTtIds ) {
 			$destTermIds = array();
+			$unmapped    = array();
 			foreach ( (array) $srcTtIds as $srcTtId ) {
 				$mapped = $this->ctx->idMap->ttIdToTermId( (int) $srcTtId );
 				if ( $mapped ) {
 					$destTermIds[] = $mapped;
+				} else {
+					$unmapped[] = (int) $srcTtId;
 				}
+			}
+			// Dropping an assignment silently is the one failure this run could not be
+			// audited for: the term rows are elsewhere in the snapshot, so nothing is
+			// skipped and the destination's post count still reconciles against the
+			// manifest. Usually it means terms were not part of this run at all
+			// (--only / --skip), which loses every taxonomy assignment on the site.
+			if ( $unmapped ) {
+				$this->ctx->logger->warn(
+					'post',
+					$destId,
+					sprintf(
+						'%s term_taxonomy_id(s) %s not mapped; assignment dropped. Import terms in the same run (--only=users,terms,posts).',
+						$taxonomy,
+						implode( ', ', $unmapped )
+					)
+				);
 			}
 			if ( $destTermIds ) {
 				try {

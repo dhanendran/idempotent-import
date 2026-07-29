@@ -66,12 +66,26 @@ existing users by `user_login` / `user_email`.
 
 | Field | Handling |
 | --- | --- |
-| `name`, `slug`, `description`, `taxonomy` | Passed to `wp_insert_term`. |
-| `parent` (source `term_id`) | Set in the rewrite phase, mapped to the destination `term_id`. |
-| `term_id`, `term_taxonomy_id` | Recorded in the ledger (both, plus a ttid→term_id shortcut). |
+| `name`, `slug`, `description`, `taxonomy` | Passed to `wp_insert_term`; re-synced on a delta re-import when the source changed. |
+| `parent` (source `term_id`) | Set in the rewrite phase, mapped to the destination `term_id`. With `terms.preserve_ids` it is already valid and goes in at insert time. |
+| `term_id`, `term_taxonomy_id` | Recorded in the ledger (both, plus a ttid→term_id shortcut). Claimed directly under `terms.preserve_ids`. |
+| `term_group` | Written to `wp_terms` (not a `wp_insert_term` argument, so it takes its own write). |
+| `count` | Written under `terms.preserve_ids`; WordPress recomputes it as post assignments land either way. |
 | `meta` | Written as term meta. |
 
-Resolver matches existing terms by `(taxonomy, slug)`.
+Resolver matches existing terms by `(taxonomy, slug)`. A matched term still
+receives the snapshot's `parent` and meta — `parent` is structural, not editorial,
+and a destination term nobody has written meta to has none to keep.
+
+The taxonomy must be **registered on the destination**: `wp_insert_term()` refuses
+an unregistered one, so every term in it is skipped.
+
+With `terms.preserve_ids` the two rows are written directly, because
+`wp_insert_term()` has no `import_id` equivalent. The `wp_terms` row is written
+only when that `term_id` is free, so a source `term_id` shared by two taxonomies
+lands as one term with two taxonomy rows — the shape the source had. Without
+preserved IDs such a term is split, and the importer warns that `parent` can no
+longer resolve unambiguously.
 
 ### Posts & attachments (`posts/{YYYY}/{MM}/{ID}.json`)
 
@@ -80,7 +94,7 @@ Resolver matches existing terms by `(taxonomy, slug)`.
 | Own columns (`post_title`, `post_content`, `post_status`, dates, `post_name`, `guid`, `menu_order`, `post_type`, `post_mime_type`, …) | Inserted verbatim (re-slashed). |
 | `post_author` | Mapped to the destination user (users import first); falls back to `default_author`. |
 | `post_parent` | Mapped in the rewrite phase. |
-| `terms` (`{taxonomy:[ttid]}`) | Assigned via `wp_set_post_terms` using destination term ids. |
+| `terms` (`{taxonomy:[ttid]}`) | Assigned via `wp_set_post_terms` using destination term ids. A ttid the run never imported is warned about and dropped — import `terms` in the same run. |
 | `comments` (`[id]`) | Ignored — comment files are authoritative; `comment_count` is recomputed by WordPress. |
 | `meta._thumbnail_id` | Rewritten to the destination attachment id. |
 | `meta.*` declared as refs | Rewritten per declared type (see EXTENDING.md). |

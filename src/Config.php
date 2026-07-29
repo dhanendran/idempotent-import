@@ -64,7 +64,10 @@ class Config {
 				'attach_roles_to_matched' => true,
 			),
 			'terms'       => array(
-				'match_by' => array( 'taxonomy', 'slug' ),
+				'match_by'     => array( 'taxonomy', 'slug' ),
+				// Claim the source term_id / term_taxonomy_id instead of reissuing. Only
+				// safe against a destination with no terms at those IDs.
+				'preserve_ids' => false,
 			),
 			'posts'       => array(
 				'match_by'     => array( 'post_type', 'post_name' ),
@@ -108,7 +111,10 @@ class Config {
 			$this->data['options']['mode'] = (string) $assocArgs['options'];
 		}
 		if ( ! empty( $assocArgs['preserve-ids'] ) ) {
+			// One flag for both: preserving post IDs while reissuing term IDs would
+			// leave term references inside post_content pointing at the wrong terms.
 			$this->data['posts']['preserve_ids'] = true;
+			$this->data['terms']['preserve_ids'] = true;
 		}
 		return $this;
 	}

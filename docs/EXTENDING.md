@@ -30,7 +30,8 @@ return [
     ],
 
     'terms' => [
-        'match_by' => ['taxonomy', 'slug'],
+        'match_by'     => ['taxonomy', 'slug'],
+        'preserve_ids' => false,                      // true: claim source term_id + ttid
     ],
 
     'posts' => [

@@ -128,6 +128,44 @@ interface WordPress {
 	public function insertTerm( $name, $taxonomy, array $args );
 
 	/**
+	 * Insert a term under its source term_id and term_taxonomy_id.
+	 *
+	 * wp_insert_term() has no `import_id` equivalent, so implementations write
+	 * wp_terms and wp_term_taxonomy directly. The wp_terms row is written only if
+	 * that term_id is free, which is what makes a source term_id shared by two
+	 * taxonomies land as one term with two taxonomy rows — the shape the source
+	 * had (spec 3.3.3).
+	 *
+	 * Callers must confirm the IDs are free first (getTermRow / getTermTaxonomyRow);
+	 * this method does not arbitrate collisions.
+	 *
+	 * @param int    $termId
+	 * @param int    $ttId
+	 * @param string $name
+	 * @param string $taxonomy
+	 * @param array  $args slug, description, parent (source term_id), count, term_group
+	 * @return array{term_id:int,term_taxonomy_id:int}
+	 * @throws \RuntimeException On failure.
+	 */
+	public function insertTermWithIds( $termId, $ttId, $name, $taxonomy, array $args );
+
+	/**
+	 * The wp_terms row occupying a term_id, or null if the ID is free.
+	 *
+	 * @param int $termId
+	 * @return array{term_id:int,name:string,slug:string,term_group:int}|null
+	 */
+	public function getTermRow( $termId );
+
+	/**
+	 * The wp_term_taxonomy row occupying a term_taxonomy_id, or null if free.
+	 *
+	 * @param int $ttId
+	 * @return array{term_taxonomy_id:int,term_id:int,taxonomy:string,parent:int}|null
+	 */
+	public function getTermTaxonomyRow( $ttId );
+
+	/**
 	 * @param int    $termId
 	 * @param string $key
 	 * @param mixed  $value
@@ -143,12 +181,29 @@ interface WordPress {
 	public function deleteTermMeta( $termId, $key );
 
 	/**
+	 * Update a subset of a term's columns.
+	 *
+	 * Used in the rewrite phase for `parent` (a destination term_id) and, when a
+	 * previously-imported term changed at the source, to re-sync name / slug /
+	 * description / term_group.
+	 *
 	 * @param int    $termId
 	 * @param string $taxonomy
-	 * @param int    $parentTermId Destination term_id.
+	 * @param array  $fields name, slug, description, parent, term_group
 	 * @return void
 	 */
-	public function updateTermParent( $termId, $taxonomy, $parentTermId );
+	public function updateTermFields( $termId, $taxonomy, array $fields );
+
+	/**
+	 * Raise the term tables' AUTO_INCREMENT so terms created after the migration
+	 * cannot reuse a migrated ID (spec 3.3.2). Never lowers either.
+	 *
+	 * @param int $nextTermId From manifest.source.auto_increment.terms.
+	 * @param int $nextTtId   From manifest.source.auto_increment.term_taxonomy,
+	 *                        or the highest ttid the run imported plus one.
+	 * @return void
+	 */
+	public function setTermsAutoIncrement( $nextTermId, $nextTtId );
 
 	/* ---- Posts ----------------------------------------------------------- */
 
