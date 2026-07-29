@@ -51,6 +51,13 @@ class Command {
 	 * [--attachments=<strategy>]
 	 * : Attachment handling strategy: sideload, reference, map-existing, skip. Default: sideload.
 	 *
+	 * [--verify-media]
+	 * : Check the snapshot's attachments against the destination's uploads and exit,
+	 *   importing nothing. Binary media never travels in a snapshot, so with
+	 *   --attachments=reference the files must be copied separately; this reports any
+	 *   original (a skip, non-zero exit) or generated size (a warning) that is not
+	 *   there. Details land in media-report.log beside the snapshot.
+	 *
 	 * [--default-author=<id>]
 	 * : Destination user ID to fall back to when a source author cannot be mapped. Default: 1.
 	 *
@@ -81,6 +88,7 @@ class Command {
 	 *     wp idempotent-import /tmp/snapshot --config=migration-map.php --attachments=sideload
 	 *     wp idempotent-import /tmp/snapshot --only=posts,terms --dry-run
 	 *     wp idempotent-import /tmp/snapshot --only=users,terms,posts --preserve-ids --attachments=reference
+	 *     wp idempotent-import /tmp/snapshot --verify-media
 	 *
 	 * @when after_wp_load
 	 *

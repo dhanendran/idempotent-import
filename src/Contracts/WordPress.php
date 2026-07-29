@@ -395,4 +395,27 @@ interface WordPress {
 	 * @return int|null
 	 */
 	public function findAttachmentByFilename( $filename );
+
+	/**
+	 * The destination's uploads base URL, no trailing slash.
+	 *
+	 * @return string
+	 */
+	public function uploadsBaseUrl();
+
+	/**
+	 * The destination's uploads base directory, no trailing slash.
+	 *
+	 * @return string
+	 */
+	public function uploadsBaseDir();
+
+	/**
+	 * Whether a file is present in the destination's uploads, given a path
+	 * relative to the uploads base (the `_wp_attached_file` form).
+	 *
+	 * @param string $relativePath
+	 * @return bool
+	 */
+	public function mediaFileExists( $relativePath );
 }

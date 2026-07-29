@@ -583,4 +583,25 @@ class Wp implements WordPress {
 		);
 		return $id ? (int) $id : null;
 	}
+
+	public function uploadsBaseUrl() {
+		$dir = wp_get_upload_dir();
+		return isset( $dir['baseurl'] ) ? rtrim( (string) $dir['baseurl'], '/' ) : '';
+	}
+
+	public function uploadsBaseDir() {
+		$dir = wp_get_upload_dir();
+		return isset( $dir['basedir'] ) ? rtrim( (string) $dir['basedir'], '/' ) : '';
+	}
+
+	public function mediaFileExists( $relativePath ) {
+		$base = $this->uploadsBaseDir();
+		$path = ltrim( (string) $relativePath, '/' );
+		if ( '' === $base || '' === $path ) {
+			return false;
+		}
+		// VIP serves uploads through a stream wrapper, which implements file_exists()
+		// but not the wider stat() surface is_file() relies on.
+		return file_exists( $base . '/' . $path );
+	}
 }

@@ -36,6 +36,9 @@ class Posts extends AbstractImporter {
 	/** Source ids whose destination row pre-existed and needs its columns re-synced. */
 	private $updatedIds = array();
 
+	/** Whether the uploads base pair has been settled for this run. */
+	private $uploadsBaseMapped = false;
+
 	public function type() {
 		return 'post';
 	}
@@ -260,7 +263,53 @@ class Posts extends AbstractImporter {
 		$srcUrl = isset( $entity['attachment_url'] ) ? (string) $entity['attachment_url'] : '';
 		if ( '' !== $srcUrl && $destUrl ) {
 			$this->ctx->idMap->rememberUrl( $srcUrl, $destUrl );
+			$this->mapUploadsBase( $srcUrl, (string) $destUrl, $entity );
 		}
+	}
+
+	/**
+	 * Map the source uploads base URL to the destination's, once per run.
+	 *
+	 * Mapping attachment URLs one at a time only ever covers the full-size file, so
+	 * every -1024x768 variant in post_content and every srcset entry keeps pointing
+	 * at the source host. The bases are what all of those share. The URL map is
+	 * applied longest-source-first, so the per-attachment entries still win where
+	 * they apply, and this only catches what they miss.
+	 *
+	 * Only safe once the destination is shown to serve the very same relative path:
+	 * then every other file under that base maps the same way. A sideload derived a
+	 * path of its own, so its base cannot stand in for the rest.
+	 *
+	 * @param string $srcUrl  Source URL of an attachment.
+	 * @param string $destUrl Its destination URL.
+	 * @param array  $entity
+	 * @return void
+	 */
+	private function mapUploadsBase( $srcUrl, $destUrl, array $entity ) {
+		if ( $this->uploadsBaseMapped ) {
+			return;
+		}
+
+		$file = isset( $entity['meta']['_wp_attached_file'][0] )
+			? ltrim( (string) $entity['meta']['_wp_attached_file'][0], '/' )
+			: '';
+		if ( '' === $file || substr( $srcUrl, -strlen( $file ) ) !== $file ) {
+			return;
+		}
+
+		$destBase = rtrim( (string) $this->ctx->wp->uploadsBaseUrl(), '/' );
+		if ( '' === $destBase || $destUrl !== $destBase . '/' . $file ) {
+			return;
+		}
+
+		$this->uploadsBaseMapped = true;
+
+		// Identical domain and path — the no-op case the spec calls out (3.3.7).
+		$srcBase = rtrim( substr( $srcUrl, 0, -strlen( $file ) ), '/' );
+		if ( '' === $srcBase || $srcBase === $destBase ) {
+			return;
+		}
+		$this->ctx->idMap->rememberUrl( $srcBase, $destBase );
 	}
 
 	/**

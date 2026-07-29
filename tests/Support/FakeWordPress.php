@@ -25,6 +25,12 @@ class FakeWordPress implements WordPress
     public array $options = [];     // name => [value, autoload]
     public array $attachmentUrls = []; // id => url
 
+    public string $uploadsUrl = 'https://dest.test/wp-content/uploads';
+    public string $uploadsDir = '/dest/wp-content/uploads';
+
+    /** Uploads-relative paths the destination holds a file for. */
+    public array $mediaFiles = [];
+
     /** Meta WordPress itself would seed on insert, e.g. _pingme. key => [values] */
     public array $onInsertPostMeta = [];
 
@@ -379,7 +385,29 @@ class FakeWordPress implements WordPress
 
     public function getAttachmentUrl($attachmentId)
     {
-        return $this->attachmentUrls[(int) $attachmentId] ?? null;
+        $id = (int) $attachmentId;
+        if (isset($this->attachmentUrls[$id])) {
+            return $this->attachmentUrls[$id];
+        }
+        // Mirror wp_get_attachment_url(): the stored relative path resolved against
+        // the destination's own uploads base.
+        $file = $this->postMeta[$id]['_wp_attached_file'][0] ?? null;
+        return null === $file ? null : $this->uploadsBaseUrl() . '/' . ltrim((string) $file, '/');
+    }
+
+    public function uploadsBaseUrl()
+    {
+        return rtrim($this->uploadsUrl, '/');
+    }
+
+    public function uploadsBaseDir()
+    {
+        return rtrim($this->uploadsDir, '/');
+    }
+
+    public function mediaFileExists($relativePath)
+    {
+        return in_array(ltrim((string) $relativePath, '/'), $this->mediaFiles, true);
     }
 
     public function findAttachmentByFilename($filename)
