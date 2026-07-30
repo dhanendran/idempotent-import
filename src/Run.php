@@ -51,6 +51,11 @@ class Run {
 
 		$blogId = $this->resolveBlogId( $assoc_args );
 
+		if ( ! empty( $assoc_args['verify-media'] ) ) {
+			$this->verifyMedia( $snapshot, $blogId );
+			return;
+		}
+
 		$sourceKey = ! empty( $assoc_args['source-key'] ) ? (string) $assoc_args['source-key'] : $manifest->sourceKey();
 
 		$config = isset( $assoc_args['config'] )
@@ -134,6 +139,54 @@ class Run {
 		if ( $logger->skipCount() > 0 ) {
 			\WP_CLI::halt( 1 );
 		}
+	}
+
+	/**
+	 * Report on the binaries behind the snapshot's attachments and exit
+	 * (--verify-media). Writes nothing to the destination.
+	 *
+	 * @param Snapshot $snapshot
+	 * @param int|null $blogId
+	 * @return void
+	 */
+	private function verifyMedia( Snapshot $snapshot, $blogId ) {
+		$wp      = new Wp();
+		$logPath = rtrim( $snapshot->root(), '/\\' ) . '/media-report.log';
+		$logger  = new Logger( $logPath );
+		$logger->open();
+
+		// Read while the target blog is still switched in: restoring it below sends
+		// wp_get_upload_dir() back to blog 1 and the path reported would be wrong.
+		$uploads = $wp->uploadsBaseDir();
+
+		\WP_CLI::log( sprintf( 'idempotent-import --verify-media <- %s (uploads: %s)', $snapshot->root(), $uploads ) );
+
+		$result = ( new MediaVerifier( $snapshot, $wp, $logger ) )->verify();
+		$logger->close();
+
+		\WP_CLI::log( sprintf( '  attachments     %6d', $result['attachments'] ) );
+		\WP_CLI::log( sprintf( '  files present   %6d of %d', $result['files'] - $result['files_missing'], $result['files'] ) );
+		\WP_CLI::log( sprintf( '  sizes present   %6d of %d', $result['sizes'] - $result['sizes_missing'], $result['sizes'] ) );
+		if ( $result['unlocatable'] > 0 ) {
+			\WP_CLI::log( sprintf( '  unlocatable     %6d   (no _wp_attached_file in the snapshot)', $result['unlocatable'] ) );
+		}
+		\WP_CLI::log( "Details: {$logPath}" );
+
+		if ( is_multisite() && null !== $blogId ) {
+			restore_current_blog();
+		}
+
+		if ( $result['files_missing'] > 0 || $result['sizes_missing'] > 0 ) {
+			\WP_CLI::error(
+				sprintf(
+					'%d missing file(s), %d missing size(s). Copy the source uploads tree into %s and re-run.',
+					$result['files_missing'],
+					$result['sizes_missing'],
+					$uploads
+				)
+			);
+		}
+		\WP_CLI::success( sprintf( 'All %d attachment file(s) present.', $result['files'] ) );
 	}
 
 	/**

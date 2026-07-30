@@ -48,6 +48,27 @@ it('assigns terms by destination term_id', function (): void {
     expect($wp->postTerms[$destPost]['category'])->toBe([$ctx->idMap->ttIdToTermId(10)]);
 });
 
+it('warns rather than silently dropping an assignment whose term was never imported', function (): void {
+    // A run that leaves terms out (--only=users,posts) can reconcile clean while
+    // having lost every taxonomy assignment on the site, so this has to be loud.
+    $b = new SnapshotBuilder(tmpdir());
+    $b->post(12345, [
+        'post_type'   => 'plps',
+        'post_title'  => 'Programme',
+        'post_name'   => 'programme',
+        'post_status' => 'publish',
+        'terms'       => ['degree_level' => [22, 23]],
+    ]);
+    $b->manifest();
+
+    $wp  = new FakeWordPress();
+    $ctx = Harness::run($b->dir(), $wp, null, 'update', new ArrayLedger());
+
+    $destPost = $ctx->idMap->post(12345);
+    expect($ctx->logger->warnCount())->toBe(1)
+        ->and($wp->postTerms[$destPost] ?? [])->toBe([]);
+});
+
 it('rewrites _thumbnail_id to the destination attachment id', function (): void {
     $wp  = new FakeWordPress();
     $ctx = Harness::run(postsSnapshot(), $wp);

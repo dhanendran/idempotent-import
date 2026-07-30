@@ -152,6 +152,87 @@ class Wp implements WordPress {
 		);
 	}
 
+	public function insertTermWithIds( $termId, $ttId, $name, $taxonomy, array $args ) {
+		global $wpdb;
+		$termId = (int) $termId;
+		$ttId   = (int) $ttId;
+
+		// Written with $wpdb rather than wp_insert_term() because there is no
+		// import_id equivalent for terms, and a reissued term_id breaks every
+		// reference the snapshot carries. Values arrive slashed (the Decoder mirrors
+		// what core's own APIs expect), so unslash before a direct write — $wpdb
+		// stores verbatim, where wp_insert_term would have unslashed for us.
+		$slug = wp_unslash( (string) ( isset( $args['slug'] ) ? $args['slug'] : '' ) );
+		if ( '' === $slug ) {
+			$slug = sanitize_title( wp_unslash( (string) $name ) );
+		}
+
+		// A term_id of 0 asks for a fresh one: the caller is splitting a source term
+		// whose term_id is already taken (see Terms::insert()).
+		$row = array(
+			'name'       => wp_unslash( (string) $name ),
+			'slug'       => $slug,
+			'term_group' => (int) ( isset( $args['term_group'] ) ? $args['term_group'] : 0 ),
+		);
+		if ( $termId > 0 ) {
+			$row['term_id'] = $termId;
+		}
+		$ok = $wpdb->insert( $wpdb->terms, $row );
+		if ( ! $ok ) {
+			throw new \RuntimeException( "could not insert wp_terms row at term_id {$termId}: " . $wpdb->last_error );
+		}
+		if ( $termId <= 0 ) {
+			$termId = (int) $wpdb->insert_id;
+		}
+
+		$ok = $wpdb->insert(
+			$wpdb->term_taxonomy,
+			array(
+				'term_taxonomy_id' => $ttId,
+				'term_id'          => $termId,
+				'taxonomy'         => wp_unslash( (string) $taxonomy ),
+				'description'      => wp_unslash( (string) ( isset( $args['description'] ) ? $args['description'] : '' ) ),
+				'parent'           => (int) ( isset( $args['parent'] ) ? $args['parent'] : 0 ),
+				'count'            => (int) ( isset( $args['count'] ) ? $args['count'] : 0 ),
+			)
+		);
+		if ( ! $ok ) {
+			throw new \RuntimeException( "could not insert wp_term_taxonomy row at term_taxonomy_id {$ttId}: " . $wpdb->last_error );
+		}
+
+		clean_term_cache( array( $termId ), (string) $taxonomy );
+
+		return array(
+			'term_id'          => $termId,
+			'term_taxonomy_id' => $ttId,
+		);
+	}
+
+	public function taxonomyExists( $taxonomy ) {
+		return taxonomy_exists( (string) $taxonomy );
+	}
+
+	public function getTermRow( $termId ) {
+		global $wpdb;
+		$row = $wpdb->get_row(
+			$wpdb->prepare( "SELECT term_id, name, slug, term_group FROM {$wpdb->terms} WHERE term_id = %d", (int) $termId ),
+			ARRAY_A
+		);
+		return $row ? $row : null;
+	}
+
+	public function getTermTaxonomyRow( $ttId ) {
+		global $wpdb;
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT term_taxonomy_id, term_id, taxonomy, parent FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id = %d",
+				(int) $ttId
+			),
+			ARRAY_A
+		);
+		return $row ? $row : null;
+	}
+
 	public function addTermMeta( $termId, $key, $value ) {
 		$metaId = add_term_meta( (int) $termId, $key, $value );
 		$this->keepSerializedStringVerbatim( $GLOBALS['wpdb']->termmeta, 'meta_id', $metaId, $value, (int) $termId, 'term_meta' );
@@ -161,8 +242,50 @@ class Wp implements WordPress {
 		delete_term_meta( (int) $termId, $key );
 	}
 
-	public function updateTermParent( $termId, $taxonomy, $parentTermId ) {
-		wp_update_term( (int) $termId, $taxonomy, array( 'parent' => (int) $parentTermId ) );
+	public function updateTermFields( $termId, $taxonomy, array $fields ) {
+		$termId = (int) $termId;
+
+		// term_group is not a wp_update_term() argument (it only sets it as a side
+		// effect of alias_of), so it takes a direct write.
+		if ( array_key_exists( 'term_group', $fields ) ) {
+			global $wpdb;
+			$wpdb->update( $wpdb->terms, array( 'term_group' => (int) $fields['term_group'] ), array( 'term_id' => $termId ) );
+			unset( $fields['term_group'] );
+		}
+
+		if ( empty( $fields ) ) {
+			clean_term_cache( array( $termId ), (string) $taxonomy );
+			return;
+		}
+
+		$result = wp_update_term( $termId, (string) $taxonomy, $fields );
+		if ( is_wp_error( $result ) ) {
+			throw new \RuntimeException( 'wp_update_term: ' . $result->get_error_message() );
+		}
+	}
+
+	public function setTermsAutoIncrement( $nextTermId, $nextTtId ) {
+		global $wpdb;
+		$this->raiseAutoIncrement( $wpdb->terms, 'term_id', (int) $nextTermId );
+		$this->raiseAutoIncrement( $wpdb->term_taxonomy, 'term_taxonomy_id', (int) $nextTtId );
+	}
+
+	/**
+	 * Push a table's AUTO_INCREMENT to at least $nextId, never below its own max.
+	 *
+	 * @param string $table    Core-derived table name.
+	 * @param string $column   Its auto-increment primary key.
+	 * @param int    $nextId
+	 * @return void
+	 */
+	private function raiseAutoIncrement( $table, $column, $nextId ) {
+		global $wpdb;
+		$highest = (int) $wpdb->get_var( "SELECT COALESCE( MAX( {$column} ), 0 ) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Table and column are core-derived, not input.
+		$target  = max( $nextId, $highest + 1 );
+		if ( $target < 1 ) {
+			return;
+		}
+		$wpdb->query( "ALTER TABLE {$table} AUTO_INCREMENT = {$target}" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Table name cannot be parameterised; it is core-derived and the value is cast to int.
 	}
 
 	/* ---- Posts ----------------------------------------------------------- */
@@ -276,15 +399,7 @@ class Wp implements WordPress {
 
 	public function setPostsAutoIncrement( $nextId ) {
 		global $wpdb;
-		$nextId  = (int) $nextId;
-		$highest = (int) $wpdb->get_var( "SELECT COALESCE( MAX( ID ), 0 ) FROM {$wpdb->posts}" );
-		$target  = max( $nextId, $highest + 1 );
-		if ( $target < 1 ) {
-			return;
-		}
-		// Table name cannot be parameterised; $wpdb->posts is core-derived, and the
-		// value is cast to int above.
-		$wpdb->query( "ALTER TABLE {$wpdb->posts} AUTO_INCREMENT = {$target}" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$this->raiseAutoIncrement( $wpdb->posts, 'ID', (int) $nextId );
 	}
 
 	public function updatePostFields( $postId, array $fields ) {
@@ -467,5 +582,26 @@ class Wp implements WordPress {
 			)
 		);
 		return $id ? (int) $id : null;
+	}
+
+	public function uploadsBaseUrl() {
+		$dir = wp_get_upload_dir();
+		return isset( $dir['baseurl'] ) ? rtrim( (string) $dir['baseurl'], '/' ) : '';
+	}
+
+	public function uploadsBaseDir() {
+		$dir = wp_get_upload_dir();
+		return isset( $dir['basedir'] ) ? rtrim( (string) $dir['basedir'], '/' ) : '';
+	}
+
+	public function mediaFileExists( $relativePath ) {
+		$base = $this->uploadsBaseDir();
+		$path = ltrim( (string) $relativePath, '/' );
+		if ( '' === $base || '' === $path ) {
+			return false;
+		}
+		// VIP serves uploads through a stream wrapper, which implements file_exists()
+		// but not the wider stat() surface is_file() relies on.
+		return file_exists( $base . '/' . $path );
 	}
 }

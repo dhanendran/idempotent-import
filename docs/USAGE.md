@@ -18,8 +18,9 @@ must contain a `manifest.json`.
 | `--only=<csv>` | all | Limit to entity types: `users,terms,posts,comments,options`. |
 | `--skip=<csv>` | — | Exclude entity types. |
 | `--on-conflict=<mode>` | `update` | When a previously-imported entity's content changed: `update`, `skip`, or `recreate`. |
-| `--preserve-ids` | off | Insert posts under their source IDs (`posts.preserve_ids`) instead of reissuing, and raise the posts `AUTO_INCREMENT` past the snapshot afterwards. Requires a destination with nothing at those IDs: an occupied ID is reported as a skip, never reissued. Pair with `--attachments=reference` — sideloaded media cannot keep its source ID. |
+| `--preserve-ids` | off | Insert posts under their source IDs and terms under their source `term_id`/`term_taxonomy_id` (`posts.preserve_ids` + `terms.preserve_ids`) instead of reissuing, and raise those tables' `AUTO_INCREMENT` past the snapshot afterwards. Requires a destination with nothing at those IDs: an occupied ID is reported as a skip, never reissued. Pair with `--attachments=reference` — sideloaded media cannot keep its source ID. |
 | `--attachments=<strategy>` | `sideload` | `sideload`, `reference`, `map-existing`, or `skip`. |
+| `--verify-media` | off | Check the snapshot's attachments against the destination's uploads and exit, importing nothing. A missing original is a skip (non-zero exit); a missing generated size is a warning. Per-attachment detail lands in `media-report.log` beside the snapshot. |
 | `--default-author=<id>` | `1` | Destination user id used when a source author can't be mapped. |
 | `--options=<mode>` | `allowlist` | `none`, `allowlist`, or `all`. |
 | `--batch-size=<n>` | `500` | Entities processed per batch. |
@@ -133,10 +134,13 @@ return [
 ];
 ```
 
-Keep media on the existing CDN instead of downloading:
+Recreate the attachment records without downloading anything, because the files
+travel by another route (a folder copy, the VIP Files API, shared storage), then
+check they arrived:
 
 ```
 wp idempotent-import /tmp/snapshot --attachments=reference
+wp idempotent-import /tmp/snapshot --verify-media
 ```
 
 Re-import after fixing source data, updating changed entities in place:
@@ -193,3 +197,12 @@ into their second site gets no role there.
   on the first login after a reset.
 - **Attachments are sideloaded from the exported URLs.** Broken source URLs
   produce skips, logged per attachment.
+- **No binary ever travels in a snapshot.** With `--attachments=reference` the
+  records keep the source's relative path, so they resolve against the
+  destination's own uploads base — but only once the files are there. Copy them
+  separately and confirm with `--verify-media`; nothing else in a run notices a
+  partial copy, because the records import cleanly and the counts still reconcile.
+- **Referenced attachments rewrite content to the destination.** The first one
+  whose path the destination preserves also maps the source uploads *base* URL, so
+  every size and `srcset` entry in `post_content` moves with it, not just the
+  full-size URL. Identical bases are a no-op.
