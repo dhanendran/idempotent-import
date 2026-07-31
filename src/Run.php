@@ -49,10 +49,11 @@ class Run {
 			);
 		}
 
-		$blogId = $this->resolveBlogId( $assoc_args );
+		$blogId    = $this->resolveBlogId( $assoc_args );
+		$reportDir = $this->reportDir( $snapshotDir, $assoc_args );
 
 		if ( ! empty( $assoc_args['verify-media'] ) ) {
-			$this->verifyMedia( $snapshot, $blogId );
+			$this->verifyMedia( $snapshot, $blogId, $reportDir );
 			return;
 		}
 
@@ -66,7 +67,7 @@ class Run {
 		$ledger = $this->buildLedger( $sourceKey, $dryRun );
 		$idMap  = new IdMap( $ledger );
 
-		$logger = new Logger( $dryRun ? null : ( rtrim( $snapshotDir, '/\\' ) . '/report.log' ) );
+		$logger = new Logger( $dryRun ? null : ( $reportDir . '/report.log' ) );
 		$logger->open();
 		if ( $verbose ) {
 			$logger->setEcho(
@@ -121,7 +122,7 @@ class Run {
 		}
 
 		if ( ! $dryRun ) {
-			$this->writeReport( $snapshotDir, $report, $logger );
+			$this->writeReport( $reportDir, $report, $logger );
 		}
 
 		$elapsed = microtime( true ) - $started;
@@ -147,11 +148,12 @@ class Run {
 	 *
 	 * @param Snapshot $snapshot
 	 * @param int|null $blogId
+	 * @param string   $reportDir
 	 * @return void
 	 */
-	private function verifyMedia( Snapshot $snapshot, $blogId ) {
+	private function verifyMedia( Snapshot $snapshot, $blogId, $reportDir ) {
 		$wp      = new Wp();
-		$logPath = rtrim( $snapshot->root(), '/\\' ) . '/media-report.log';
+		$logPath = $reportDir . '/media-report.log';
 		$logger  = new Logger( $logPath );
 		$logger->open();
 
@@ -359,12 +361,27 @@ class Run {
 	}
 
 	/**
+	 * Where report.log, media-report.log and import-report.json are written.
+	 *
+	 * Defaults to the snapshot directory. On an object-store filesystem those writes land
+	 * as records nothing can delete without platform support, so allow redirecting them.
+	 *
 	 * @param string $snapshotDir
+	 * @param array  $assoc_args
+	 * @return string
+	 */
+	private function reportDir( $snapshotDir, array $assoc_args ) {
+		$dir = isset( $assoc_args['report-dir'] ) ? (string) $assoc_args['report-dir'] : '';
+		return rtrim( '' !== $dir ? $dir : $snapshotDir, '/\\' );
+	}
+
+	/**
+	 * @param string $reportDir
 	 * @param Report $report
 	 * @param Logger $logger
 	 */
-	private function writeReport( $snapshotDir, Report $report, Logger $logger ) {
-		$path = rtrim( $snapshotDir, '/\\' ) . '/import-report.json';
+	private function writeReport( $reportDir, Report $report, Logger $logger ) {
+		$path = $reportDir . '/import-report.json';
 		try {
 			$json = Json::encode( $report->build( $logger->skips() ) );
 			file_put_contents( $path, $json );

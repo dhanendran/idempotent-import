@@ -73,6 +73,11 @@ class Command {
 	 * [--blog-id=<id>]
 	 * : Destination blog on multisite. Required there.
 	 *
+	 * [--report-dir=<dir>]
+	 * : Where to write report.log, media-report.log and import-report.json. Defaults to
+	 *   the snapshot directory. Point this at local storage when the snapshot lives on an
+	 *   object store, where written files cannot be removed without platform support.
+	 *
 	 * [--quiet]
 	 * : Suppress progress bars.
 	 *
