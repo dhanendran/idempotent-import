@@ -14,6 +14,12 @@ class Snapshot {
 	/** @var string Absolute path to the snapshot root. */
 	private $root;
 
+	/** @var string[]|null Snapshot-relative paths from files.json; null when there is no index. */
+	private $index = null;
+
+	/** @var bool Whether files.json has been looked for yet. */
+	private $indexLoaded = false;
+
 	/**
 	 * @param string $root
 	 */
@@ -29,14 +35,15 @@ class Snapshot {
 	}
 
 	/**
-	 * @throws \RuntimeException If the root is not a readable directory.
+	 * Readability is judged on manifest.json alone: is_dir() cannot be trusted on an
+	 * object-store filesystem, where a stream wrapper reports any extension-less path
+	 * as an existing directory.
+	 *
+	 * @throws \RuntimeException If the snapshot has no readable manifest.json.
 	 */
 	public function assertReadable() {
-		if ( ! is_dir( $this->root ) ) {
-			throw new \RuntimeException( "Snapshot directory not found: {$this->root}" );
-		}
 		if ( ! is_file( $this->root . '/manifest.json' ) ) {
-			throw new \RuntimeException( "No manifest.json in snapshot: {$this->root}" );
+			throw new \RuntimeException( "Not a readable snapshot (no manifest.json): {$this->root}" );
 		}
 	}
 
@@ -113,6 +120,16 @@ class Snapshot {
 	 * @return bool
 	 */
 	public function has( $subdir ) {
+		$index = $this->index();
+		if ( null !== $index ) {
+			$prefix = trim( $subdir, '/' ) . '/';
+			foreach ( $index as $relative ) {
+				if ( 0 === strpos( $relative, $prefix ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
 		return is_dir( $this->root . '/' . $subdir );
 	}
 
@@ -128,11 +145,92 @@ class Snapshot {
 	 * @return \Generator<string,string>
 	 */
 	private function files( $subdir ) {
-		$base = $this->root . '/' . trim( $subdir, '/' );
+		$subdir = trim( $subdir, '/' );
+		$index  = $this->index();
+
+		if ( null !== $index ) {
+			yield from $this->indexed( $subdir, $index );
+			return;
+		}
+
+		$base = $this->root . '/' . $subdir;
 		if ( ! is_dir( $base ) ) {
 			return;
 		}
 		yield from $this->walk( $base );
+	}
+
+	/**
+	 * Snapshot-relative *.json paths under a subdirectory, taken from the index.
+	 *
+	 * Sorting the whole list is safe here in a way it is not in walk(): an index only
+	 * exists because the tree cannot be listed, and it is already in memory.
+	 *
+	 * @param string   $subdir
+	 * @param string[] $index
+	 * @return \Generator<string,string>
+	 */
+	private function indexed( $subdir, array $index ) {
+		$prefix = '' === $subdir ? '' : $subdir . '/';
+		$paths  = array();
+
+		foreach ( $index as $relative ) {
+			if ( '' !== $prefix && 0 !== strpos( $relative, $prefix ) ) {
+				continue;
+			}
+			if ( 'json' !== strtolower( (string) pathinfo( $relative, PATHINFO_EXTENSION ) ) ) {
+				continue;
+			}
+			$paths[] = $relative;
+		}
+
+		sort( $paths, SORT_STRING );
+
+		foreach ( $paths as $relative ) {
+			yield $relative => $this->root . '/' . $relative;
+		}
+	}
+
+	/**
+	 * Snapshot-relative paths from files.json, or null when the snapshot has no index.
+	 *
+	 * The index exists so a snapshot can be read without listing directories, which an
+	 * object-store filesystem cannot do: VIP and S3 stream wrappers implement file reads
+	 * but no directory handler, so opendir()/FilesystemIterator fails outright.
+	 *
+	 * @return string[]|null
+	 */
+	private function index() {
+		if ( $this->indexLoaded ) {
+			return $this->index;
+		}
+		$this->indexLoaded = true;
+
+		$path = $this->root . '/files.json';
+		if ( ! is_file( $path ) ) {
+			return null;
+		}
+
+		$data = $this->tryDecode( $path );
+		if ( ! is_array( $data ) ) {
+			return null;
+		}
+
+		$paths = array();
+		foreach ( $data as $relative ) {
+			if ( ! is_string( $relative ) || '' === $relative ) {
+				continue;
+			}
+			$relative = ltrim( str_replace( '\\', '/', $relative ), '/' );
+			// An index entry naming a parent directory would read outside the snapshot.
+			if ( '' === $relative || preg_match( '#(^|/)\.\.(/|$)#', $relative ) ) {
+				continue;
+			}
+			$paths[] = $relative;
+		}
+
+		$this->index = $paths ? $paths : null;
+		return $this->index;
 	}
 
 	/**
