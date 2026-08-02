@@ -33,6 +33,9 @@ class ReferenceOnly implements AttachmentStrategy {
 			);
 		}
 
-		return new AttachmentResult( $destId, '' !== $url ? $url : null, 'referenced' );
+		// Map to the URL the destination serves, not the source one, or content rewriting is a no-op.
+		$destUrl = $ctx->wp->getAttachmentUrl( $destId );
+
+		return new AttachmentResult( $destId, $destUrl ? $destUrl : ( '' !== $url ? $url : null ), 'referenced' );
 	}
 }
