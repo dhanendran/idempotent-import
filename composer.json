@@ -1,7 +1,7 @@
 {
     "name": "dhanendran/idempotent-import",
     "description": "WP-CLI command that imports a deterministic JSON snapshot produced by WP Idempotent Export (darylldoyle/idempotent-export) into a WordPress site, idempotently and non-destructively.",
-    "type": "wp-cli-package",
+    "type": "wordpress-plugin",
     "license": "MIT",
     "require": {
         "php": "^7.4 || ^8.0"

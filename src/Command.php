@@ -40,13 +40,23 @@ class Command {
 	 *   One of: update, skip, recreate. Default: update.
 	 *
 	 * [--preserve-ids]
-	 * : Insert posts under their source IDs instead of reissuing, and raise the posts
-	 *   AUTO_INCREMENT past the snapshot afterwards. Requires a destination with no
-	 *   content at those IDs — an occupied ID is reported as a skip, never reissued.
-	 *   Use with --attachments=reference; sideloaded media cannot keep its source ID.
+	 * : Insert posts under their source IDs, and terms under their source term_id and
+	 *   term_taxonomy_id, instead of reissuing — then raise those tables' AUTO_INCREMENT
+	 *   past the snapshot. Requires a destination with no content at those IDs — an
+	 *   occupied ID is reported as a skip, never reissued. Note `wp site empty` re-seeds
+	 *   a default category, so delete it unless the source holds the same term at the
+	 *   same ID. Use with --attachments=reference; sideloaded media cannot keep its
+	 *   source ID.
 	 *
 	 * [--attachments=<strategy>]
 	 * : Attachment handling strategy: sideload, reference, map-existing, skip. Default: sideload.
+	 *
+	 * [--verify-media]
+	 * : Check the snapshot's attachments against the destination's uploads and exit,
+	 *   importing nothing. Binary media never travels in a snapshot, so with
+	 *   --attachments=reference the files must be copied separately; this reports any
+	 *   original (a skip, non-zero exit) or generated size (a warning) that is not
+	 *   there. Details land in media-report.log beside the snapshot.
 	 *
 	 * [--default-author=<id>]
 	 * : Destination user ID to fall back to when a source author cannot be mapped. Default: 1.
@@ -63,6 +73,11 @@ class Command {
 	 * [--blog-id=<id>]
 	 * : Destination blog on multisite. Required there.
 	 *
+	 * [--report-dir=<dir>]
+	 * : Where to write report.log, media-report.log and import-report.json. Defaults to
+	 *   the snapshot directory. Point this at local storage when the snapshot lives on an
+	 *   object store, where written files cannot be removed without platform support.
+	 *
 	 * [--quiet]
 	 * : Suppress progress bars.
 	 *
@@ -77,7 +92,8 @@ class Command {
 	 *     wp idempotent-import /tmp/snapshot
 	 *     wp idempotent-import /tmp/snapshot --config=migration-map.php --attachments=sideload
 	 *     wp idempotent-import /tmp/snapshot --only=posts,terms --dry-run
-	 *     wp idempotent-import /tmp/snapshot --only=posts --preserve-ids --attachments=reference
+	 *     wp idempotent-import /tmp/snapshot --only=users,terms,posts --preserve-ids --attachments=reference
+	 *     wp idempotent-import /tmp/snapshot --verify-media
 	 *
 	 * @when after_wp_load
 	 *

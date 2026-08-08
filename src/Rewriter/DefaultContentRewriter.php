@@ -31,6 +31,13 @@ class DefaultContentRewriter implements ContentRewriter {
 	 */
 	private $urlMap = null;
 
+	/**
+	 * Root-relative form of the base pairs in the URL map, built once per run.
+	 *
+	 * @var array<string,string>
+	 */
+	private $pathMap = array();
+
 	public function rewrite( $html, array $post, Context $ctx ) {
 		if ( '' === (string) $html ) {
 			return $html;
@@ -103,11 +110,66 @@ class DefaultContentRewriter implements ContentRewriter {
 				'from' => array_keys( $urls ),
 				'to'   => array_values( $urls ),
 			);
+			$this->pathMap = $this->buildPathMap( $this->urlMap['from'], $this->urlMap['to'] );
 		}
 
 		if ( empty( $this->urlMap['from'] ) ) {
 			return $html;
 		}
-		return str_replace( $this->urlMap['from'], $this->urlMap['to'], $html );
+
+		$html = str_replace( $this->urlMap['from'], $this->urlMap['to'], $html );
+
+		// Root-relative references — `url(/wp-content/uploads/sites/7/…)` in inline CSS,
+		// srcset entries, hand-written hrefs — carry no host for the map above to match.
+		// The lookbehind keeps the pattern off the path half of an absolute URL.
+		foreach ( $this->pathMap as $srcPath => $destPath ) {
+			$rewritten = preg_replace( '#(?<![\w:/])' . preg_quote( $srcPath, '#' ) . '#', $destPath, $html );
+			// preg_replace returns null on failure; keeping $html leaves the pass a no-op
+			// rather than blanking post_content.
+			if ( null !== $rewritten ) {
+				$html = $rewritten;
+			}
+		}
+
+		return $html;
+	}
+
+	/**
+	 * Reduce the URL map to the base pairs, as paths.
+	 *
+	 * A pair is a base when another source URL sits underneath it — true of the uploads
+	 * base, false of a per-attachment URL. Only a base is safe to apply as a prefix, and
+	 * only a base is present when the paths map cleanly (a sideload derives its own path,
+	 * so no base pair is recorded and this stays empty).
+	 *
+	 * @param string[] $from
+	 * @param string[] $to
+	 * @return array<string,string>
+	 */
+	protected function buildPathMap( array $from, array $to ) {
+		$pairs = array();
+
+		foreach ( $from as $i => $src ) {
+			$isBase = false;
+			foreach ( $from as $j => $other ) {
+				if ( $i !== $j && 0 === strpos( $other, $src . '/' ) ) {
+					$isBase = true;
+					break;
+				}
+			}
+			if ( ! $isBase ) {
+				continue;
+			}
+
+			$srcPath  = (string) parse_url( $src, PHP_URL_PATH );
+			$destPath = (string) parse_url( $to[ $i ], PHP_URL_PATH );
+			if ( '' === $srcPath || '' === $destPath || $srcPath === $destPath ) {
+				continue;
+			}
+
+			$pairs[ $srcPath ] = $destPath;
+		}
+
+		return $pairs;
 	}
 }
