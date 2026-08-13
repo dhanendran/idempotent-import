@@ -5,8 +5,8 @@ namespace IdempotentImport;
 /**
  * The inverse of the exporter's Encoder.
  *
- * The exporter calls wp_unslash() once on every stored string before encoding
- * to JSON, so snapshot content is un-slashed. WordPress's insert/update APIs
+ * The exporter writes stored strings to JSON verbatim, because $wpdb hands back
+ * raw column bytes rather than slashed input. WordPress's insert/update APIs
  * (wp_insert_post, wp_insert_term, wp_insert_comment, wp_insert_user,
  * add_*_meta) all expect *slashed* input and un-slash it internally. To keep
  * content byte-identical across export -> import -> re-export we therefore
