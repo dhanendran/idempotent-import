@@ -30,6 +30,19 @@ it('applies only allowlisted options by default', function (): void {
     expect($wp->options['blogname']['value'])->toBe('My Site');
 });
 
+it('stores option values verbatim, because update_option never un-slashes', function (): void {
+    $json = '{"variables":{"variable":[{"variable_key":"next-cohort","variable_value":"January 2027"}]}}';
+    $b    = new SnapshotBuilder(tmpdir());
+    $b->options(['global_variables' => ['autoload' => 'yes', 'value' => ['site_global_variables' => $json]]]);
+    $b->manifest();
+
+    $config = new Config(['options' => ['allow' => ['global_variables']]]);
+    $wp     = new FakeWordPress();
+    Harness::run($b->dir(), $wp, $config);
+
+    expect($wp->options['global_variables']['value']['site_global_variables'])->toBe($json);
+});
+
 it('remaps reference options and still denies cron in all mode', function (): void {
     $config = new Config(['options' => ['mode' => 'all']]);
     $wp     = new FakeWordPress();

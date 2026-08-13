@@ -8,9 +8,12 @@ namespace IdempotentImport;
  * The exporter calls wp_unslash() once on every stored string before encoding
  * to JSON, so snapshot content is un-slashed. WordPress's insert/update APIs
  * (wp_insert_post, wp_insert_term, wp_insert_comment, wp_insert_user,
- * add_*_meta, update_option) all expect *slashed* input and un-slash it
- * internally. To keep content byte-identical across export -> import ->
- * re-export we therefore re-slash on the way in.
+ * add_*_meta) all expect *slashed* input and un-slash it internally. To keep
+ * content byte-identical across export -> import -> re-export we therefore
+ * re-slash on the way in.
+ *
+ * update_option()/add_option() are the exception: they never un-slash, so the
+ * Options importer must store values raw or the slashes are persisted.
  *
  * Meta and option values decoded from JSON may be scalars or arrays. WordPress
  * re-serializes arrays on storage, so we simply hand arrays back (slashed

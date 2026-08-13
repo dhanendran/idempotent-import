@@ -60,7 +60,8 @@ class Options extends AbstractImporter {
 				continue;
 			}
 
-			$this->ctx->wp->updateOption( $name, $this->ctx->decoder->forStorageValue( $value ), $autoload );
+			// Raw, not forStorageValue(): update_option() never un-slashes, unlike the post/meta APIs.
+			$this->ctx->wp->updateOption( $name, $value, $autoload );
 			$this->ctx->report->record( 'option', 'updated' );
 		}
 	}
