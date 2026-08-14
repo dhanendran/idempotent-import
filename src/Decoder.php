@@ -8,11 +8,12 @@ namespace IdempotentImport;
  * The exporter writes stored strings to JSON verbatim, because $wpdb hands back
  * raw column bytes rather than slashed input. WordPress's insert/update APIs
  * (wp_insert_post, wp_insert_term, wp_insert_comment, wp_insert_user,
- * add_*_meta, update_option) all expect *slashed* input and un-slash it
- * internally, so we slash on the way in and land the original bytes. Never
- * un-slash on export to pair with this: stripslashes() is not the inverse of
- * addslashes() for data that legitimately contains backslashes: a footnotes
- * meta value's JSON escapes come back stripped, leaving unparseable JSON.
+ * add_*_meta) all expect *slashed* input and un-slash it internally. To keep
+ * content byte-identical across export -> import -> re-export we therefore
+ * re-slash on the way in.
+ *
+ * update_option()/add_option() are the exception: they never un-slash, so the
+ * Options importer must store values raw or the slashes are persisted.
  *
  * Meta and option values decoded from JSON may be scalars or arrays. WordPress
  * re-serializes arrays on storage, so we simply hand arrays back (slashed
